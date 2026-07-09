@@ -2,7 +2,7 @@
 
 Chrome Manifest V3 extension that annotates Chinese text on webpages with pinyin and provides on-hover dictionary lookup. Built for reading modern Chinese web novels in-place with minimal UI friction.
 
-![M1 proof](m1-proof.png)
+<img width="1280" height="720" alt="m1-proof" src="https://github.com/user-attachments/assets/8c1d5192-d87d-43bb-b82e-f3e72a6f1127" />
 
 ## Highlights
 - Lens mode: annotate only text that enters the viewport (no revert-on-scroll in v1)
