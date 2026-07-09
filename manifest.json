@@ -1,18 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Hanzi Reader",
-  "version": "0.1.0",
+  "name": "Lechyy-Learn",
+  "version": "0.1.1",
   "description": "Annotate Chinese text on webpages with pinyin and on-hover translation.",
   "permissions": ["activeTab", "storage", "scripting"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/index.js"],
+      "js": ["content/index.ts"],
       "css": ["styles/ruby.css"],
       "run_at": "document_idle"
     }
-  ],
-  "action": {
-    "default_popup": "popup/index.html"
-  }
+  ]
 }

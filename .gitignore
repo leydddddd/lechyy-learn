@@ -9,11 +9,7 @@ data/cedict.txt
 m1-proof.png
 *.tsbuildinfo
 
-AGENTS.md
-UNIVERSAL.md
-PLAN.md
-
-.playwright-mcp
+# Local planning/guardrail docs — intentionally not tracked
 PLAN.md
 AGENTS.md
 UNIVERSAL.md

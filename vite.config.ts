@@ -1,13 +1,19 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
+import webExtension from "vite-plugin-web-extension";
 
-// M1 only: standalone preview. The web-extension plugin and content-script
-// wiring turn on in M2, once content/index.ts exists. For now we serve the
-// mo1/ proof-of-concept directly so `npm run dev` = ruby + pinyin + tone
-// colors validation with no extension overhead.
+// M2: full extension build via vite-plugin-web-extension. The plugin reads
+// manifest.json and resolves content_scripts / html inputs as bundle entries.
+// M1's standalone proof lives in m1/; to preview it manually run
+//   vite --root m1
 export default defineConfig({
-  root: "m1",
+  plugins: [webExtension()],
   build: {
-    outDir: "../dist-m1",
+    outDir: "dist",
     emptyOutDir: true,
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    include: ["**/*.test.ts"],
   },
 });

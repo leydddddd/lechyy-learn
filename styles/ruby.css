@@ -1,0 +1,42 @@
+/* Lechyy — extension-side ruby styling. Scoped to ruby[data-word] so host-site
+   markup (e.g. literature sites that use plain <ruby>) is not affected. All
+   rules here only apply to ruby elements this extension injected. */
+
+ruby[data-word] {
+  ruby-position: over;
+  ruby-align: center;
+  line-height: 1.8;
+}
+
+ruby[data-word] rt {
+  font-size: 0.5em !important;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  letter-spacing: 0.02em !important;
+  color: inherit;
+  text-transform: none;
+  user-select: none;
+}
+
+ruby[data-word] rb {
+  ruby-align: center;
+}
+
+/* Tone colors — only applied to our rt elements that carry a tone-N class. */
+ruby[data-word] rt.tone-1 {
+  color: #2563eb;
+}
+ruby[data-word] rt.tone-2 {
+  color: #16a34a;
+}
+ruby[data-word] rt.tone-3 {
+  color: #ea580c;
+}
+ruby[data-word] rt.tone-4 {
+  color: #dc2626;
+}
+
+/* Holding wrapper used transiently between collect and annotate. Keep it
+   invisible to layout so it never shifts the page. */
+[data-hanzi-pending] {
+  display: inline;
+}
