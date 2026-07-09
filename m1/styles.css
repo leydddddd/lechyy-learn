@@ -1,0 +1,68 @@
+:root {
+  --ruby-font-size: 1.1rem;
+  --rt-font-size: 0.5em;
+  --tone-1: #2563eb;
+  --tone-2: #16a34a;
+  --tone-3: #ea580c;
+  --tone-4: #dc2626;
+}
+
+body {
+  max-width: 52rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui,
+    sans-serif;
+  line-height: 2;
+  color: #1f2937;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin-top: 2rem;
+}
+
+.meta {
+  color: #6b7280;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+code {
+  background: #f3f4f6;
+  padding: 0.05em 0.25em;
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+
+hanzi-ruby {
+  ruby-position: over;
+}
+
+hanzi-ruby rt {
+  font-size: var(--rt-font-size);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.tone-1 {
+  color: var(--tone-1);
+}
+.tone-2 {
+  color: var(--tone-2);
+}
+.tone-3 {
+  color: var(--tone-3);
+}
+.tone-4 {
+  color: var(--tone-4);
+}
+
+.ruby-inline {
+  display: inline;
+}

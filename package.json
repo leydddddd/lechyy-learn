@@ -1,0 +1,28 @@
+{
+  "name": "lechyy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chinese Reader Browser Extension — annotate Chinese text with pinyin + on-hover translation",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:dict": "tsx scripts/build-dict.ts"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.28.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vite-plugin-web-extension": "^4.5.1",
+    "vitest": "^2.1.5"
+  }
+}

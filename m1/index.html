@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lechyy · M1 Pinyin Proof of Concept</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <h1>Lechyy · M1 · 拼音注音验证</h1>
+    <p class="meta">
+      Validates: ruby CSS layout · pinyin-pro output · tone color classes ·
+      multi-character tokenization.
+    </p>
+
+    <section class="paragraph" data-source="硬编码示例">
+      <template data-annotate>汉字不是字母，是表意文字。汉语拼音是现代标准汉语的罗马化方案。</template>
+    </section>
+
+    <section class="paragraph" data-source="多音字示例">
+      <template data-annotate>他睡着了，睡得很熟。</template>
+    </section>
+
+    <section class="paragraph" data-source="罗马音示例">
+      <template data-annotate>Web 小说 — 阅读 Chinese 的时候，标注只在汉字上。</template>
+    </section>
+
+    <h2>使用方法</h2>
+    <p>
+      打开浏览器控制台，挂载点为 <code>[data-annotate]</code> 模板的内容被替换为
+      <code><ruby></code> 注音。颜色： tone-1 蓝、tone-2 绿、tone-3 橙、tone-4 红。
+    </p>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
