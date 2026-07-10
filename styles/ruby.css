@@ -40,3 +40,70 @@ ruby[data-word] rt.tone-4 {
 [data-hanzi-pending] {
   display: inline;
 }
+
+/* ─── Tooltip (M3) ────────────────────────────────────────────────────────
+   Single shared div mounted to document.body. Scoped to
+   div[data-hanzi="tooltip"] so host-site tooltip styles are never affected.
+   All properties are !important because content scripts run inside host
+   pages whose CSS may already target #hanzi-tooltip-like ids. */
+
+div[data-hanzi="tooltip"] {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  z-index: 2147483647 !important; /* above any site stacking context */
+  max-width: 360px !important;
+  min-width: 120px !important;
+  padding: 10px 14px !important;
+  margin: 0 !important;
+  background: #fff !important;
+  border: 1px solid #d4d4d8 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14) !important;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  color: #1f2937 !important;
+  pointer-events: none !important;
+  box-sizing: border-box !important;
+  display: none;
+}
+
+div[data-hanzi="tooltip"].hanzi-tooltip--visible {
+  display: block !important;
+}
+
+div[data-hanzi="tooltip"] .hanzi-tooltip__word {
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  color: #111827 !important;
+}
+
+div[data-hanzi="tooltip"] .hanzi-tooltip__pinyin {
+  font-size: 13px !important;
+  color: #6b7280 !important;
+  font-style: italic !important;
+  margin-top: 2px !important;
+}
+
+div[data-hanzi="tooltip"] .hanzi-tooltip__defs {
+  list-style: none !important;
+  margin: 8px 0 0 !important;
+  padding: 0 !important;
+  border-top: 1px solid #e5e7eb !important;
+  padding-top: 8px !important;
+}
+
+div[data-hanzi="tooltip"] .hanzi-tooltip__defs li {
+  margin: 2px 0 !important;
+  padding: 0 !important;
+  font-size: 13px !important;
+  color: #374151 !important;
+}
+
+div[data-hanzi="tooltip"] .hanzi-tooltip__noentry {
+  margin-top: 6px !important;
+  font-size: 12px !important;
+  color: #9ca3af !important;
+  font-style: italic !important;
+}

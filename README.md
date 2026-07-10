@@ -13,18 +13,16 @@ Chrome Manifest V3 extension that annotates Chinese text on webpages with pinyin
 ## Status
 - M1: Static proof of concept (done, lives in `m1/`)
 - M2: Lens-mode MVP (in `content/`)
-- M3: Dictionary integration (planned)
+- M3: Dictionary integration + hover tooltip (done, in `content/`)
 - M4: Stability pass (planned)
 
-## Architecture Overview
-Content script runs on matching pages, walks text nodes, segments CJK, injects ruby markup, and attaches hover handlers.
+## Data Flow (simplified):
 
-Data flow (simplified):
-
-1. `content/index.ts`: orchestrates DOM walk, lens filtering, and annotation
+1. `content/index.ts`: orchestrates DOM walk, lens filtering, annotation, and hover event delegation
 2. `content/segmenter.ts`: CJK detection + tokenization
 3. `content/annotator.ts`: ruby injection with pinyin
-4. Dictionary lookup and tooltip UI are planned for M3
+4. `content/dictionary.ts`: lazy CC-CEDICT loader + O(1) lookup + user-dict overlay (M3.5 stub)
+5. `content/tooltip.ts`: hover tooltip showing word + pinyin + definitions
 
 ## Project Structure
 
@@ -87,6 +85,10 @@ One-time preprocessing from raw CC-CEDICT to `data/cedict.json`:
 npm run build:dict
 ```
 
+This downloads the gzipped CC-CEDICT from MDBG, parses ~125k entries, indexes
+by simplified hanzi, converts numeric pinyin to tone-marked form, and writes a
+~12MB JSON file. The file is gitignored — run this step after cloning.
+
 ## Key Design Decisions
 
 - Lens mode annotates only on enter; no revert logic in v1 to avoid DOM churn.
@@ -98,9 +100,8 @@ npm run build:dict
 If you touch the DOM walker, segmenter, or dictionary lookup logic, add or update vitest coverage for the pure function involved. These areas are prone to subtle CJK edge cases.
 
 ## Roadmap (v1)
-
-- M2: IntersectionObserver annotate-on-enter + early CJK gate
-- M3: CC-CEDICT lookup + hover tooltip
+- M2: IntersectionObserver annotate-on-enter + early CJK gate ✓
+- M3: CC-CEDICT lookup + hover tooltip ✓
 - M4: MutationObserver + chunked processing for stability
 
 ## License

@@ -1,7 +1,46 @@
 import { annotateTextNode, initAnnotator } from "./annotator";
 import { collectTextNodes, containsHanzi } from "./segmenter";
+import { hideTooltip, onRubyHover } from "./tooltip";
 
 const PENDING_ATTR = "data-hanzi-pending";
+
+// Event delegation: instead of attaching mouseenter/mouseleave to every ruby
+// (expensive on long novel pages), we listen on document.body for the bubbling
+// mouseover/mouseout events. mouseenter/mouseleave do not bubble, so we use
+// the bubbling pair and check relatedTarget to emulate non-bubbling semantics.
+const RUBY_SELECTOR = "ruby[data-word]";
+
+let hoverListenersAttached = false;
+
+function closestRuby(target: EventTarget | null): Element | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest(RUBY_SELECTOR);
+}
+
+function handleMouseOver(e: Event): void {
+  const ruby = closestRuby(e.target);
+  if (!ruby) return;
+  void onRubyHover(ruby);
+}
+
+function handleMouseOut(e: Event): void {
+  const ruby = closestRuby(e.target);
+  if (!ruby) return;
+  // Only hide when the pointer leaves the ruby entirely (not when it crosses
+  // into a descendant like <rb>/<rt>).
+  const related = (e as MouseEvent).relatedTarget as Node | null;
+  if (related && ruby.contains(related)) return;
+  hideTooltip();
+}
+
+// Attach the delegated hover listeners once per page. Idempotent.
+export function attachHoverListeners(): void {
+  if (hoverListenersAttached) return;
+  if (!document.body) return;
+  document.body.addEventListener("mouseover", handleMouseOver);
+  document.body.addEventListener("mouseout", handleMouseOut);
+  hoverListenersAttached = true;
+}
 
 // Idle callback with graceful fallback for environments without
 // requestIdleCallback (older browsers / tests).
@@ -61,6 +100,7 @@ export function runLensMode(): number {
   if (!document.body) return 0;
   if (!pageHasChinese()) return 0;
   initAnnotator();
+  attachHoverListeners();
 
   const candidates = collectTextNodes(document.body);
   if (candidates.length === 0) return 0;
