@@ -6,9 +6,11 @@
 // The JSON is fetched via chrome.runtime.getURL so it works in the MV3 content
 // script isolated world (file listed in manifest web_accessible_resources).
 //
-// M3.5 prep: a user-dict overlay (data/user-dict.json) is merged on top of
-// CEDICT so per-novel glossary entries override/augment the base dictionary.
-// The overlay file is optional — its absence is a silent no-op.
+// M3.5: user-created entries stored in chrome.storage.local are merged on top
+// of CEDICT so per-novel glossary entries override/augment the base dictionary.
+// The optional data/user-dict.json seed file is also merged if present (import
+// format, also listed as web_accessible_resource). Storage entries win over
+// seed-file entries, and both win over CEDICT.
 
 import type { CedictJson, DictEntry } from "../scripts/build-dict";
 
@@ -16,6 +18,7 @@ export type { DictEntry } from "../scripts/build-dict";
 
 const CEDICT_RESOURCE = "cedict.json";
 const USER_DICT_RESOURCE = "user-dict.json";
+const STORAGE_KEY = "userDict";
 
 let dictMap: Map<string, DictEntry[]> | null = null;
 let loadPromise: Promise<Map<string, DictEntry[]>> | null = null;
@@ -91,6 +94,53 @@ function isEntryRecord(v: unknown): v is Record<string, DictEntry[]> {
   return true;
 }
 
+// Read user-dict entries from chrome.storage.local. Returns a plain
+// Record<string, DictEntry[]> suitable for mergeOverlay, or null if storage
+// is empty / unavailable / malformed (silent no-op, base dict still works).
+// Exported for tests.
+export async function getUserDictEntries(): Promise<Record<string, DictEntry[]> | null> {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    return null;
+  }
+  try {
+    const result = await chrome.storage.local.get(STORAGE_KEY);
+    const raw = result[STORAGE_KEY];
+    if (raw && isEntryRecord(raw)) return raw;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Write a single entry to the user dict in chrome.storage.local. Preserves
+// existing entries under other keys. Used by future UI (★-to-save in v2.0)
+// and by import paths. Exported for tests.
+export async function setUserEntry(
+  word: string,
+  entry: DictEntry,
+): Promise<void> {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    return;
+  }
+  const result = await chrome.storage.local.get(STORAGE_KEY);
+  const existing: Record<string, DictEntry[]> =
+    result[STORAGE_KEY] && isEntryRecord(result[STORAGE_KEY])
+      ? (result[STORAGE_KEY] as Record<string, DictEntry[]>)
+      : {};
+  existing[word] = [entry];
+  await chrome.storage.local.set({ [STORAGE_KEY]: existing });
+}
+
+// Extract the set of simplified words currently in the user dict (for the
+// custom-term pre-segmentation pass in annotator.ts). Returns a sorted array
+// of custom terms (longest first so the longest-match greedy split works).
+// Exported for tests and for the annotator.
+export async function getCustomTerms(): Promise<string[]> {
+  const entries = await getUserDictEntries();
+  if (!entries) return [];
+  return Object.keys(entries).sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
 // Load CEDICT + optional user-dict overlay into the module-level Map. The
 // promise is cached so subsequent calls reuse the same load. Errors during
 // user-dict load are swallowed (overlay is optional); CEDICT errors propagate.
@@ -105,16 +155,20 @@ export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
     }
     let map = buildMap(raw.entries);
 
-    // M3.5 overlay: user-dict.json is optional. If present and well-formed,
-    // its entries override CEDICT for the same key. A 404 or parse failure is
-    // a silent no-op — the base dictionary still works.
+    // M3.5 overlay: seed file first (optional import format), then storage
+    // on top so user-created entries always win over both seed and CEDICT.
     try {
       const overlayRaw = await fetchJson(USER_DICT_RESOURCE);
       if (overlayRaw && isEntryRecord(overlayRaw)) {
         map = mergeOverlay(map, overlayRaw);
       }
     } catch {
-      // No user dict yet — expected for M3. Not an error.
+      // No user dict seed file — expected. Not an error.
+    }
+
+    const userEntries = await getUserDictEntries();
+    if (userEntries) {
+      map = mergeOverlay(map, userEntries);
     }
 
     dictMap = map;
