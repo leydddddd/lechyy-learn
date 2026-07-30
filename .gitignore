@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-m1/
 .vite/
 *.local
 data/cedict_*.u8
@@ -9,7 +8,6 @@ data/cedict.json
 data/cedict.checksum.json
 data/user-dict.json
 .playwright-mcp/
-m1-proof.png
 *.tsbuildinfo
 
 # Local planning/guardrail docs — intentionally not tracked
