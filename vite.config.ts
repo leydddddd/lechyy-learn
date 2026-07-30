@@ -8,9 +8,10 @@ import webExtension from "vite-plugin-web-extension";
 //
 // M3: `data/` is the Vite publicDir so cedict.json + user-dict.json land at the
 // extension root (dist/) and are fetchable via chrome.runtime.getURL("cedict.json").
-// The build-dict step writes data/cedict.json before `vite build` runs; if the
-// real file is absent a placeholder is used so the extension still loads (every
-// lookup falls through to the per-character pinyin fallback).
+// The build-dict step writes data/cedict.json before `vite build` runs. If the
+// real file is absent at build time, `scripts/placeholder.js` writes a 3-entry
+// placeholder with `v: 0, _placeholder: true` and prints a banner. At runtime,
+// `dictionary.ts` detects `isPlaceholder` and emits a [lechyy] console.warn.
 export default defineConfig({
   plugins: [webExtension()],
   publicDir: "data",

@@ -94,6 +94,14 @@ function isEntryRecord(v: unknown): v is Record<string, DictEntry[]> {
   return true;
 }
 
+function isPlaceholder(raw: CedictJson): boolean {
+  return (
+    typeof raw._placeholder === "boolean" &&
+    raw._placeholder &&
+    raw.v === 0
+  );
+}
+
 // Read user-dict entries from chrome.storage.local. Returns a plain
 // Record<string, DictEntry[]> suitable for mergeOverlay, or null if storage
 // is empty / unavailable / malformed (silent no-op, base dict still works).
@@ -152,6 +160,9 @@ export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
     const raw = await fetchJson(CEDICT_RESOURCE);
     if (!isCedictJson(raw)) {
       throw new Error("cedict.json: invalid format (missing .entries)");
+    }
+    if (isPlaceholder(raw)) {
+      console.warn("[lechyy] cedict.json is placeholder data — tooltips will be inaccurate. Run npm run build:dict to install the real CC-CEDICT dictionary.");
     }
     let map = buildMap(raw.entries);
 

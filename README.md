@@ -5,12 +5,14 @@ Chrome Manifest V3 extension that annotates Chinese text on webpages with pinyin
 <img width="1280" height="720" alt="m1-proof" src="https://github.com/user-attachments/assets/8c1d5192-d87d-43bb-b82e-f3e72a6f1127" />
 
 ## Highlights
+
 - Lens mode: annotate only text that enters the viewport (no revert-on-scroll in v1)
 - Inline ruby markup with tone-marked pinyin via `pinyin-pro`
 - Offline CC-CEDICT dictionary lookup on hover (M3)
 - Early CJK gate to avoid heavy work on non-Chinese pages
 
 ## Status
+
 - M1: Static proof of concept (done, lives in `m1/`)
 - M2: Lens-mode MVP (in `content/`)
 - M3: Dictionary integration + hover tooltip (done, in `content/`)
@@ -100,6 +102,7 @@ by simplified hanzi, converts numeric pinyin to tone-marked form, and writes a
 If you touch the DOM walker, segmenter, or dictionary lookup logic, add or update vitest coverage for the pure function involved. These areas are prone to subtle CJK edge cases.
 
 ## Roadmap (v1)
+
 - M2: IntersectionObserver annotate-on-enter + early CJK gate ✓
 - M3: CC-CEDICT lookup + hover tooltip ✓
 - M4: MutationObserver + chunked processing for stability

@@ -22,8 +22,9 @@
 // where Entry = { t: string; p: string; d: string[] }
 //   t = traditional, p = tone-marked pinyin, d = definitions
 
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGunzip } from "node:zlib";
@@ -46,7 +47,17 @@ export interface DictEntry {
 export interface CedictJson {
   v: number;
   entries: Record<string, DictEntry[]>;
+  _placeholder?: boolean;
 }
+
+export interface CedictChecksum {
+  v: number;
+  downloadDate: string; // ISO date string of when the dict was downloaded
+  byteLength: number; // byte length of the decompressed UTF-8 text
+  sha256: string; // lowercase hex SHA-256 of the decompressed text
+}
+
+const CHECKSUM_PATH = resolve(__dirname, "..", "data", "cedict.checksum.json");
 
 // CC-CEDICT line regex. Traditional and simplified are space-delimited and may
 // contain non-hanzi (digits, latin) for entries like "120". Pinyin is in
@@ -139,6 +150,35 @@ export function buildIndex(raw: string): CedictJson {
 async function main(): Promise<void> {
   console.info(`Downloading CC-CEDICT from ${CEDICT_URL} …`);
   const raw = await downloadAndGunzip(CEDICT_URL);
+
+  // Compute provenance data from the decompressed text.
+  const byteLength = Buffer.byteLength(raw, "utf8");
+  const sha256 = createHash("sha256").update(raw, "utf8").digest("hex");
+  const checksum: CedictChecksum = {
+    v: 1,
+    downloadDate: new Date().toISOString().split("T")[0],
+    byteLength,
+    sha256,
+  };
+
+  // Check against any existing checksum file — warn on drift.
+  try {
+    const existing = JSON.parse(
+      await readFile(CHECKSUM_PATH, "utf8"),
+    ) as CedictChecksum;
+    if (existing.sha256 !== sha256) {
+      console.warn(
+        `WARNING: upstream CC-CEDICT changed since the last build. ` +
+          `Old sha256: ${existing.sha256}, new: ${sha256}.`,
+      );
+    } else {
+      console.info("Checksum match: no upstream drift detected.");
+    }
+  } catch {
+    // No existing checksum file — first build, safe to proceed.
+    console.info("No existing checksum found — first build.");
+  }
+
   const index = buildIndex(raw);
 
   await mkdir(dirname(OUT_PATH), { recursive: true });
@@ -155,6 +195,14 @@ async function main(): Promise<void> {
 
   const sizeMb = (Buffer.byteLength(json) / 1024 / 1024).toFixed(1);
   console.info(`Wrote ${OUT_PATH} (${sizeMb} MB)`);
+
+  // Persist the checksum file alongside the dict.
+  await writeFile(
+    CHECKSUM_PATH,
+    JSON.stringify(checksum, null, 0) + "\n",
+    "utf8",
+  );
+  console.info(`Wrote ${CHECKSUM_PATH}`);
 }
 
 // Run only when invoked directly (not when imported by tests).

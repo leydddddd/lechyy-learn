@@ -6,6 +6,7 @@ dist-m1/
 data/cedict_*.u8
 data/cedict.txt
 data/cedict.json
+data/cedict.checksum.json
 data/user-dict.json
 .playwright-mcp/
 m1-proof.png

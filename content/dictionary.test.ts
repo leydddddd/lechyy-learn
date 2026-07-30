@@ -398,3 +398,36 @@ describe("setDictionary / resetDictionary", () => {
     await expect(loadDictionary()).rejects.toThrow();
   });
 });
+
+describe("placeholder data contract (M0.1)", () => {
+  beforeEach(() => {
+    resetDictionary();
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    resetDictionary();
+    vi.unstubAllGlobals();
+  });
+
+  it("emits [lechyy] console.warn and still loads entries when placeholder is present", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        v: 0,
+        _placeholder: true,
+        entries: { 你好: [{ t: "你好", p: "nǐ hǎo", d: ["placeholder"] }] },
+      }),
+    }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadDictionary } = await import("./dictionary");
+    const dict = await loadDictionary();
+    const result = lookup(dict, "你好");
+    expect(result).not.toBeNull();
+    expect(result![0].d).toEqual(["placeholder"]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("[lechyy]");
+    expect(warnSpy.mock.calls[0][0]).toContain("placeholder");
+    warnSpy.mockRestore();
+  });
+});
