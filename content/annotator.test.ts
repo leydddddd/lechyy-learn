@@ -64,6 +64,29 @@ describe("collectTextNodes", () => {
     expect(SKIP_TAGS.has("RUBY")).toBe(true);
     expect(SKIP_TAGS.has("SCRIPT")).toBe(true);
   });
+
+  it("excludes text inside <div contenteditable>", () => {
+    setBody('<div contenteditable="true">汉字编辑中</div>');
+    expect(collectTextNodes(document.body)).toHaveLength(0);
+  });
+
+  it("excludes text inside [aria-hidden=\"true\"]", () => {
+    setBody('<div aria-hidden="true">汉字隐藏</div>');
+    expect(collectTextNodes(document.body)).toHaveLength(0);
+  });
+
+  it("excludes text inside [inert]", () => {
+    setBody('<div inert>汉字惰性</div>');
+    expect(collectTextNodes(document.body)).toHaveLength(0);
+  });
+
+  it("nested text inside contenteditable element is rejected via parent walk", () => {
+    setBody('<div contenteditable><p><span>汉字深层嵌套</span></p></div>');
+    const div = document.querySelector("div")!;
+    // Verify the ancestor is an editing surface (contenteditable attr present)
+    expect(div.hasAttribute("contenteditable")).toBe(true);
+    expect(collectTextNodes(document.body)).toHaveLength(0);
+  });
 });
 
 describe("annotateText", () => {

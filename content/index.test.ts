@@ -209,4 +209,51 @@ describe("runLensMode (full content-script entry)", () => {
       expect(rt.className).toMatch(/^tone-[1-4]$/);
     }
   });
+
+  it("does NOT annotate text inside contenteditable", () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <p id="normal">普通文本汉字。</p>
+      <div contenteditable="true">编辑区汉字。</div>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    runLensMode();
+
+    expect(document.querySelector("#normal ruby[data-word]")).not.toBeNull();
+    expect(document.querySelector("div contenteditable ruby[data-word]") || 
+             document.querySelector("div[contenteditable] ruby[data-word]") ||
+             document.querySelectorAll("div[contenteditable] ruby[data-word]").length).toBe(0);
+  });
+
+  it("does NOT annotate text inside aria-hidden elements", () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <p id="showing">可见汉字文本。</p>
+      <div aria-hidden="true">隐藏汉字文本。</div>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    runLensMode();
+
+    expect(document.querySelector("#showing ruby[data-word]")).not.toBeNull();
+    expect(document.querySelectorAll("div[aria-hidden] ruby[data-word]").length).toBe(0);
+  });
+
+  it("does NOT annotate text inside inert elements", () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <p id="active">活跃汉字文本。</p>
+      <div inert>惰性汉字文本。</div>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    runLensMode();
+
+    expect(document.querySelector("#active ruby[data-word]")).not.toBeNull();
+    expect(document.querySelectorAll("div[inert] ruby[data-word]").length).toBe(0);
+  });
 });
