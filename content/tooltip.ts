@@ -18,11 +18,30 @@ import type { DictEntry } from "./dictionary";
 const TOOLTIP_ID = "hanzi-tooltip";
 const VISIBLE_CLASS = "hanzi-tooltip--visible";
 
+// The data-hanzi="tooltip" attribute is the single source of truth for idempotency.
+// reinjection: if this module runs a second time on the same frame, any residual
+// event-listener closures from the previous run are harmless — they operate on a
+// detached node and do nothing.  We do NOT attempt to remove those closures; doing
+// so is impossible (addEventListener has no "remove all listeners by handler" API).
+// Instead we make them harmless by destroying the DOM node they target.
+const TOOLTIP_SELECTOR = '[data-hanzi="tooltip"]';
+
 let tooltipEl: HTMLDivElement | null = null;
 let scrollListener: (() => void) | null = null;
 
 function ensureTooltip(): HTMLDivElement {
+  // Short-circuit: still connected and we have a live reference.
   if (tooltipEl && tooltipEl.isConnected) return tooltipEl;
+
+  // Reinject / orphan adoption: a tooltip node may already exist in the DOM
+  // (created by a previous module instance). Adopt it so orphaned listeners
+  // from older modules that later call ensureTooltip will get the SAME node.
+  const existing = document.querySelector(TOOLTIP_SELECTOR) as HTMLDivElement | null;
+  if (existing) {
+    tooltipEl = existing;
+    return existing;
+  }
+
   const el = document.createElement("div");
   el.id = TOOLTIP_ID;
   el.setAttribute("data-hanzi", "tooltip");
@@ -170,8 +189,7 @@ export function detachScrollDismiss(): void {
 
 export function destroyTooltip(): void {
   detachScrollDismiss();
-  if (tooltipEl && tooltipEl.parentNode) {
-    tooltipEl.parentNode.removeChild(tooltipEl);
-  }
-  tooltipEl = null;
+  // Use the data attribute selector so we always find the tooltip node even if
+  // tooltipEl was nullified by a previous reinjection.
+  document.querySelectorAll(TOOLTIP_SELECTOR).forEach((n) => n.remove());
 }

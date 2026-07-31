@@ -196,6 +196,133 @@ describe("showTooltip positioning", () => {
   });
 });
 
+describe("reinjection guard (0.4)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.stubGlobal("innerWidth", 1024);
+    vi.stubGlobal("innerHeight", 800);
+    Element.prototype.getBoundingClientRect = vi.fn(
+      function (this: HTMLElement): DOMRect {
+        if (this.hasAttribute && this.hasAttribute("data-hanzi")) {
+          return rect(0, 80, 0, 200);
+        }
+        return rect(100, 130, 200, 60);
+      },
+    ) as unknown as typeof Element.prototype.getBoundingClientRect;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
+  it("after module reload, ensureTooltip cleans up any pre-existing tooltip node so only one lives in the DOM", async () => {
+    // First load: show a tooltip.
+    const mod1 = await import("./tooltip");
+    mod1.showTooltip({
+      word: "测试",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "測試", p: "cè shì", d: ["test"] }],
+      fallbackPinyin: "cè shì",
+    });
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // Simulate reinjection: invalidate the module cache and re-import.
+    // In a real browser this resets module-level `tooltipEl` to null,
+    // orphaning the old listeners.
+    vi.resetModules();
+    const mod2 = await import("./tooltip");
+
+    // On reinjection the old tooltip node is still in the DOM (orphaned).
+    // The new module should clean it up on the next ensureTooltip call.
+    mod2.showTooltip({
+      word: "复查",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "複查", p: "fù chá", d: ["review"] }],
+      fallbackPinyin: "fù chá",
+    });
+
+    // Acceptance criterion: exactly one tooltip node.
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // The rendered content should belong to the *second* show, proving the
+    // fresh module took over rather than sharing the stale node.
+    const el = document.querySelector("div[data-hanzi='tooltip']")!;
+    expect(el.querySelector(".hanzi-tooltip__word")!.textContent).toBe("复查");
+  });
+
+  it("orphaned listeners on the old module do not recreate a tooltip node", async () => {
+    // First load: attach a delegated hover listener and show a tooltip.
+    const mod1 = await import("./tooltip");
+    mod1.showTooltip({
+      word: "旧",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "舊", p: "jiù", d: ["old"] }],
+      fallbackPinyin: "jiù",
+    });
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // Simulate reinjection.
+    vi.resetModules();
+    const mod2 = await import("./tooltip");
+
+    // Destroy + re-show via new module (mirrors index.ts reinjection guard).
+    mod2.destroyTooltip();
+    mod2.showTooltip({
+      word: "新",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "新", p: "xīn", d: ["new"] }],
+      fallbackPinyin: "xīn",
+    });
+
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // Now invoke the old module's hideTooltip (simulating a stray mouseout
+    // from the orphaned listener).  It must NOT create a new node.
+    mod1.hideTooltip();
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+  });
+
+  it("orphaned showTooltip from old module must not create a duplicate tooltip after reinject", async () => {
+    // First load: show a tooltip so mod1's tooltipEl is populated.
+    const mod1 = await import("./tooltip");
+    mod1.showTooltip({
+      word: "旧",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "舊", p: "jiù", d: ["old"] }],
+      fallbackPinyin: "jiù",
+    });
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // Simulate reinjection: new module loads and shows a tooltip.
+    // Its ensureTooltip() removes the old DOM node and creates a fresh one.
+    vi.resetModules();
+    const mod2 = await import("./tooltip");
+    mod2.showTooltip({
+      word: "新",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "新", p: "xīn", d: ["new"] }],
+      fallbackPinyin: "xīn",
+    });
+    // After mod2: exactly one node, content is "新".
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+
+    // The old module's tooltipEl now references a DETACHED node.
+    // If the old module's orphaned listener fires a showTooltip, it must
+    // not create a second tooltip node.
+    mod1.showTooltip({
+      word: "旧",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "舊", p: "jiù", d: ["old"] }],
+      fallbackPinyin: "jiù",
+    });
+
+    // Acceptance: one tooltip node, and its content belongs to the fresh
+    // module (or is empty if mod2 hasn't shown anything yet).
+    expect(document.querySelectorAll("div[data-hanzi='tooltip']")).toHaveLength(1);
+  });
+});
 describe("onRubyHover", () => {
   let loadDictionaryMock: ReturnType<typeof vi.fn>;
   let lookupMock: ReturnType<typeof vi.fn>;

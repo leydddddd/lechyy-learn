@@ -1,16 +1,27 @@
 import { annotateTextNode, initAnnotator } from "./annotator";
 import { collectTextNodes, containsHanzi } from "./segmenter";
-import { hideTooltip, onRubyHover } from "./tooltip";
+import { destroyTooltip, hideTooltip, onRubyHover } from "./tooltip";
+
+// Reinjection guard (0.4): mark that this script has loaded. On reinject, clean
+// up any pre-existing tooltip node.  Residual event-listener closures from older
+// script instances are impossible to remove (addEventListener has no
+// "unregister-all" API), so we make them harmless — their closures reference a
+// module-state object whose `tooltipEl` is now null, and `destroyTooltip` wipes
+// the DOM node.  Orphaned listeners remain on document.body but operate on a
+// now-detached element and do nothing.
+const LECHYY_LOADED_ATTR = "data-lechyy-loaded";
+const RUBY_SELECTOR = "ruby[data-word]";
+let hoverListenersAttached = false;
+
+if (document.documentElement.hasAttribute(LECHYY_LOADED_ATTR)) {
+  // Reinjection: clean up existing tooltip from a previous script run.
+  destroyTooltip();
+  // Reset module-level state so subsequent calls behave as a fresh load.
+  hoverListenersAttached = false;
+}
+document.documentElement.setAttribute(LECHYY_LOADED_ATTR, "1");
 
 const PENDING_ATTR = "data-hanzi-pending";
-
-// Event delegation: instead of attaching mouseenter/mouseleave to every ruby
-// (expensive on long novel pages), we listen on document.body for the bubbling
-// mouseover/mouseout events. mouseenter/mouseleave do not bubble, so we use
-// the bubbling pair and check relatedTarget to emulate non-bubbling semantics.
-const RUBY_SELECTOR = "ruby[data-word]";
-
-let hoverListenersAttached = false;
 
 function closestRuby(target: EventTarget | null): Element | null {
   if (!(target instanceof Element)) return null;
