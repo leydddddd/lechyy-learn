@@ -9,6 +9,8 @@ data/cedict.checksum.json
 data/user-dict.json
 .playwright-mcp/
 *.tsbuildinfo
+e2e
+test-results
 
 # Local planning/guardrail docs — intentionally not tracked
 PLAN.md

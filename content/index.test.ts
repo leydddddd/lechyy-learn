@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initAnnotator } from "./annotator";
+import { ensureAnnotator } from "./annotator";
 import { runLensMode } from "./index";
 
 // Cheapest possible IntersectionObserver mock: callback fires with the
@@ -110,13 +110,13 @@ function installAlwaysInViewRect(): void {
 }
 
 describe("runLensMode (full content-script entry)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     document.body.remove();
     const body = document.createElement("body");
     document.documentElement.appendChild(body);
     MockIntersectionObserver.reset();
     instanceRef = null;
-    initAnnotator();
+    await ensureAnnotator();
     vi.useFakeTimers();
   });
 
@@ -125,7 +125,7 @@ describe("runLensMode (full content-script entry)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("annotates in-view candidates immediately and leaves out-of-view pending", () => {
+  it("annotates in-view candidates immediately and leaves out-of-view pending", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="inView">汉字在视口内。</p>
@@ -134,10 +134,15 @@ describe("runLensMode (full content-script entry)", () => {
     vi.stubGlobal("innerHeight", 800);
     installContentAwareRect();
 
-    const candidateCount = runLensMode();
+    const candidateCount = await runLensMode();
 
     expect(candidateCount).toBe(2);
-    // In-view text got annotated immediately.
+    // idle() defers in-view annotation via requestIdleCallback/setTimeout(1),
+    // so flush timers to let the idle callback fire, then flush microtasks.
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // In-view text got annotated after idle flush.
     expect(
       document
         .querySelector("#inView")
@@ -150,34 +155,36 @@ describe("runLensMode (full content-script entry)", () => {
     expect(MockIntersectionObserver.observed.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("annotates out-of-view candidates once IntersectionObserver reports intersecting", () => {
+  it("annotates out-of-view candidates once IntersectionObserver reports intersecting", async () => {
     installObserverMock();
     document.body.innerHTML = `<p id="below">下方汉字等注音。</p>`;
     vi.stubGlobal("innerHeight", 600);
     installContentAwareRect();
 
-    runLensMode();
+    await runLensMode();
     expect(MockIntersectionObserver.observed).toHaveLength(1);
 
     // Now simulate scroll-in: report the pending span as intersecting.
+    // idle() falls back to setTimeout(0/1); flush the fake timer, then
+    // flush any pending microtasks (the async annotation chain).
     MockIntersectionObserver.notifyAll();
-    // idle() falls back to setTimeout(0/1); flush the fake timer.
     vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     const ruby = document.querySelector("ruby[data-word]");
     expect(ruby).not.toBeNull();
   });
 
-  it("exits early on a page with no CJK (no observer attached)", () => {
+  it("exits early on a page with no CJK (no observer attached)", async () => {
     installObserverMock();
     document.body.innerHTML = `<p>Hello world only latin text</p>`;
-    const out = runLensMode();
+    const out = await runLensMode();
     expect(out).toBe(0);
     expect(MockIntersectionObserver.observed).toHaveLength(0);
     expect(document.querySelectorAll("ruby[data-word]")).toHaveLength(0);
   });
 
-  it("does NOT annotate text inside <pre>/<code>/<script>/<style>", () => {
+  it("does NOT annotate text inside <pre>/<code>/<script>/<style>", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="plain">普通汉字应注音。</p>
@@ -189,19 +196,23 @@ describe("runLensMode (full content-script entry)", () => {
     vi.stubGlobal("innerHeight", 2000);
     installAlwaysInViewRect();
 
-    runLensMode();
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     expect(document.querySelector("#plain ruby[data-word]")).not.toBeNull();
     expect(document.querySelector("#pre ruby[data-word]")).toBeNull();
     expect(document.querySelector("#code ruby[data-word]")).toBeNull();
   });
 
-  it("tone classes on rendered rt match each token's pinyin", () => {
+  it("tone classes on rendered rt match each token's pinyin", async () => {
     installObserverMock();
     document.body.innerHTML = `<p id="p">汉字两个字</p>`;
     vi.stubGlobal("innerHeight", 2000);
     installAlwaysInViewRect();
-    runLensMode();
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     const rts = Array.from(document.querySelectorAll("#p rt"));
     expect(rts.length).toBeGreaterThan(0);
@@ -210,7 +221,7 @@ describe("runLensMode (full content-script entry)", () => {
     }
   });
 
-  it("does NOT annotate text inside contenteditable", () => {
+  it("does NOT annotate text inside contenteditable", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="normal">普通文本汉字。</p>
@@ -219,7 +230,9 @@ describe("runLensMode (full content-script entry)", () => {
     vi.stubGlobal("innerHeight", 2000);
     installAlwaysInViewRect();
 
-    runLensMode();
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     expect(document.querySelector("#normal ruby[data-word]")).not.toBeNull();
     expect(document.querySelector("div contenteditable ruby[data-word]") || 
@@ -227,7 +240,7 @@ describe("runLensMode (full content-script entry)", () => {
              document.querySelectorAll("div[contenteditable] ruby[data-word]").length).toBe(0);
   });
 
-  it("does NOT annotate text inside aria-hidden elements", () => {
+  it("does NOT annotate text inside aria-hidden elements", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="showing">可见汉字文本。</p>
@@ -236,13 +249,15 @@ describe("runLensMode (full content-script entry)", () => {
     vi.stubGlobal("innerHeight", 2000);
     installAlwaysInViewRect();
 
-    runLensMode();
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     expect(document.querySelector("#showing ruby[data-word]")).not.toBeNull();
     expect(document.querySelectorAll("div[aria-hidden] ruby[data-word]").length).toBe(0);
   });
 
-  it("does NOT annotate text inside inert elements", () => {
+  it("does NOT annotate text inside inert elements", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="active">活跃汉字文本。</p>
@@ -251,7 +266,9 @@ describe("runLensMode (full content-script entry)", () => {
     vi.stubGlobal("innerHeight", 2000);
     installAlwaysInViewRect();
 
-    runLensMode();
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
 
     expect(document.querySelector("#active ruby[data-word]")).not.toBeNull();
     expect(document.querySelectorAll("div[inert] ruby[data-word]").length).toBe(0);

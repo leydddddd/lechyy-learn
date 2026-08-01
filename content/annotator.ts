@@ -1,15 +1,85 @@
 import { addDict, OutputFormat, segment } from "pinyin-pro";
-import CompleteDict from "@pinyin-pro/data/complete";
 
 import { ANNOTATED_ATTR, containsHanzi, toneClass } from "./segmenter";
 
-let dictLoaded = false;
+let ready: Promise<void> | RetryState | null = null;
 
-// Idempotent: call once per content-script lifetime before annotating.
-export function initAnnotator(): void {
-  if (dictLoaded) return;
-  addDict(CompleteDict);
-  dictLoaded = true;
+interface RetryState {
+  promise: Promise<void>;
+  attempts: number;
+}
+
+const MAX_DICT_RETRIES = 3;
+const RETRY_COOLDOWN_MS = 3_000;
+let lastFailureTime = 0;
+
+/**
+ * Ensure the pinyin-pro dictionary is loaded. Resolves exactly once — the
+ * first call triggers a dynamic import of @pinyin-pro/data/complete (~10 MB),
+ * subsequent calls return the same resolved promise.
+ *
+ * Retry logic: on failure, waits for a cooldown before allowing a new attempt,
+ * and caps total retries to prevent thundering-herd rerenders.
+ */
+export function ensureAnnotator(): Promise<void> {
+  if (!ready) {
+    const now = Date.now();
+    const timeSinceFailure = now - lastFailureTime;
+    if (timeSinceFailure < RETRY_COOLDOWN_MS) {
+      // Still cooldown: return Promise.reject so callers get a consistent rejection.
+return Promise.reject(new Error("Dict load in cooldown"));
+    }
+    const state: RetryState = { promise: null as unknown as Promise<void>, attempts: 0 };
+    state.promise = loadDict(state);
+    ready = state;
+  }
+
+  // Already warming up or retried
+  if (ready && typeof ready === "object" && "promise" in ready) {
+    return ready.promise;
+  }
+
+  // ready is a bare Promise<void> — already resolved (from previous success)
+  return ready as Promise<void>;
+}
+
+async function loadDict(state: RetryState): Promise<void> {
+  state.attempts++;
+
+  if (state.attempts > MAX_DICT_RETRIES) {
+    console.warn(
+      "Lechyy: dictionary load exceeded max retries (",
+      MAX_DICT_RETRIES,
+      ") — giving up",
+    );
+    lastFailureTime = Date.now();
+    ready = null;
+    throw new Error("Dict load exceeded max retries");
+  }
+
+  if (state.attempts > 1) {
+    // Respect cooldown before subsequent retries
+    const timeSinceFailure = Date.now() - lastFailureTime;
+    if (timeSinceFailure < RETRY_COOLDOWN_MS) {
+      await new Promise((r) => setTimeout(r, RETRY_COOLDOWN_MS - timeSinceFailure));
+    }
+  }
+
+  try {
+    const { default: data } = await import("@pinyin-pro/data/complete");
+    addDict(data);
+    ready = Promise.resolve();
+  } catch (err) {
+    console.error(
+      "Lechyy: dict load failed (attempt ",
+      state.attempts,
+      "):",
+      err instanceof Error ? err.message : String(err),
+    );
+    lastFailureTime = Date.now();
+    ready = null;
+    throw err;
+  }
 }
 
 interface CharInfo {
@@ -80,7 +150,6 @@ export function annotateText(
   src: string,
   customTerms?: readonly string[],
 ): DocumentFragment {
-  initAnnotator();
   const frag = document.createDocumentFragment();
 
   const terms = customTerms && customTerms.length > 0 ? customTerms : undefined;
@@ -167,7 +236,11 @@ function _appendWords(frag: DocumentFragment, words: CharInfo[][]): void {
 // Replace a Text node with the annotated fragment and mark the parent as
 // processed so collectTextNodes skips it on later runs. Returns the ruby
 // elements inserted (for the caller to wire hover handlers in M3).
-export function annotateTextNode(node: Text): Element[] {
+// Guards with ensureAnnotator() so it is safe for any caller, including
+// MutationObserver and programmatic callers, even if the dictionary has not
+// yet loaded.
+export async function annotateTextNode(node: Text): Promise<Element[]> {
+  await ensureAnnotator();
   const parent = node.parentNode;
   if (!parent) return [];
   const text = node.nodeValue ?? "";

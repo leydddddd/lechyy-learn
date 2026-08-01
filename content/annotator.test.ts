@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+
 import {
   ANNOTATED_ATTR,
   collectTextNodes,
@@ -9,13 +10,23 @@ import {
   annotateText,
   annotateTextNode,
   applyCustomSegments,
-  initAnnotator,
+  ensureAnnotator,
 } from "./annotator";
 
 function setBody(html: string): HTMLElement {
   document.body.innerHTML = html;
   return document.body;
 }
+
+// Dictionary loaded once in beforeAll. No per-test module resets to avoid
+// leaking ~10 MB of pinyin-pro data in jsdom/Vitest's module map.
+beforeAll(async () => {
+  await ensureAnnotator();
+});
+
+beforeEach(() => {
+  document.body.innerHTML = "";
+});
 
 describe("collectTextNodes", () => {
   beforeEach(() => {
@@ -89,12 +100,18 @@ describe("collectTextNodes", () => {
   });
 });
 
-describe("annotateText", () => {
-  it("initAnnotator is idempotent", () => {
-    initAnnotator();
-    initAnnotator();
+describe("ensureAnnotator", () => {
+  it("returns same promise on concurrent calls (idempotent)", async () => {
+    const p1 = ensureAnnotator();
+    const p2 = ensureAnnotator();
+    expect(p1).toBe(p2);
+    await p1;
+    const p3 = ensureAnnotator();
+    expect(p3).toBe(p1);
   });
+});
 
+describe("annotateText", () => {
   it("wraps multi-char hanzi words into a single ruby with multiple rb/rt pairs", () => {
     const frag = annotateText("他睡着了。");
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
@@ -264,12 +281,12 @@ describe("annotateText with customTerms (M3.5)", () => {
 });
 
 describe("annotateTextNode", () => {
-  it("replaces the text node with a ruby fragment and marks the parent", () => {
+  it("replaces the text node with a ruby fragment and marks the parent", async () => {
     setBody('<p id="p">他睡着了。</p>');
     const p = document.getElementById("p")!;
     const textNode = p.firstChild as Text;
     expect(textNode.nodeType).toBe(Node.TEXT_NODE);
-    const inserted = annotateTextNode(textNode);
+    const inserted = await annotateTextNode(textNode);
     expect(inserted.length).toBeGreaterThan(0);
     // Parent is now marked annotated.
     expect(p.hasAttribute(ANNOTATED_ATTR)).toBe(true);
@@ -279,8 +296,8 @@ describe("annotateTextNode", () => {
     expect(textNode.parentNode).toBeNull();
   });
 
-  it("returns [] when the node has no parent (already removed)", () => {
+  it("returns [] when the node has no parent (already removed)", async () => {
     const orphan = document.createTextNode("孤立汉字");
-    expect(annotateTextNode(orphan)).toEqual([]);
+    expect(await annotateTextNode(orphan)).toEqual([]);
   });
 });
