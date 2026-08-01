@@ -15,6 +15,17 @@
 
 import type { DictEntry } from "./dictionary";
 
+// Hover generation counter (M4.7): monotonically-increasing counter so a
+// late in-flight lookup cannot reopen the tooltip after pointer exit or
+// overwrite a more recently-hovered word.  beginHover() is called at the
+// start of onRubyHover; dismissHover() fires on mouseout (from index.ts)
+// and on scroll (below).
+let hoverGen = 0;
+
+export function getHoverGen(): number { return hoverGen; }
+export function beginHover(): number { return ++hoverGen; }
+export function dismissHover(): void { hoverGen++; }
+
 const TOOLTIP_ID = "hanzi-tooltip";
 const VISIBLE_CLASS = "hanzi-tooltip--visible";
 
@@ -149,21 +160,26 @@ export function hideTooltip(): void {
   tooltipEl.style.display = "none";
 }
 
-// Attach a scroll listener that hides the tooltip. Called once on first hover
-// so we don't pay the listener cost on pages where the user never hovers.
+// Attach a scroll listener that hides the tooltip and invalidates in-flight
+// lookups (M4.7 generation counter) so the tooltip cannot reappear after
+// the user has scrolled past the hovered ruby.
 export function attachScrollDismiss(): void {
   if (scrollListener) return;
-  scrollListener = () => hideTooltip();
+  scrollListener = () => {
+    hideTooltip();
+    dismissHover();  // M4.7: invalidate in-flight lookups
+  };
   window.addEventListener("scroll", scrollListener, { passive: true, capture: true });
 }
 
-// The hover handler invoked when the pointer enters a ruby[data-word] element.
-// Fetches the dictionary lazily on first use, then shows the tooltip.
 export async function onRubyHover(ruby: Element): Promise<void> {
   attachScrollDismiss();
   const word = ruby.getAttribute("data-word") ?? "";
   const rubyRect = ruby.getBoundingClientRect();
   const fallbackPinyin = pinyinFromRuby(ruby);
+
+  // Capture generation at the start of this hover request (M4.7).
+  const myGen = beginHover();
 
   // Late import to avoid loading dictionary module state at content-script init
   // time. The dynamic import + fetch only happens on the first hover.
@@ -177,7 +193,13 @@ export async function onRubyHover(ruby: Element): Promise<void> {
     // fallback tooltip so the user still gets pinyin.
     entries = null;
   }
-  showTooltip({ word, rubyRect, entries, fallbackPinyin });
+
+  // Only show if this request is still the current one (M4.7).  A late
+  // lookup cannot reopen the tooltip after the user has left the ruby or
+  // moved to a newer one.
+  if (myGen === hoverGen) {
+    showTooltip({ word, rubyRect, entries, fallbackPinyin });
+  }
 }
 
 // Detach the scroll listener — used by tests for cleanup.

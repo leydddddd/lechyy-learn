@@ -425,3 +425,114 @@ describe("onRubyHover", () => {
     expect(el.querySelector(".hanzi-tooltip__noentry")).not.toBeNull();
   });
 });
+
+describe("tooltip generation counter (M4.7)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.stubGlobal("innerWidth", 1024);
+    vi.stubGlobal("innerHeight", 800);
+    Element.prototype.getBoundingClientRect = vi.fn(
+      function (this: HTMLElement): DOMRect {
+        if (this.hasAttribute && this.hasAttribute("data-hanzi")) {
+          return rect(0, 80, 0, 200);
+        }
+        return rect(100, 130, 200, 60);
+      },
+    ) as unknown as typeof Element.prototype.getBoundingClientRect;
+  });
+
+  afterEach(async () => {
+    destroyTooltip();
+    vi.unstubAllGlobals();
+    vi.doUnmock("./dictionary");
+    await vi.resetModules();
+  });
+
+  it("in-flight lookup does not show tooltip after dismissHover", async () => {
+    // Inject dictionary mock that resolves slowly so dismissHover fires first.
+    const slowMap = new Promise<Map<string, DictEntry[]>>((resolve) => {
+      setTimeout(() => resolve(new Map()), 500);
+    });
+    const lookupMock = vi.fn().mockReturnValue([{ t: "测试", p: "cè shì", d: ["test"] }]);
+
+    vi.doMock("./dictionary", () => ({
+      loadDictionary: () => slowMap,
+      lookup: lookupMock,
+      buildMap: vi.fn(),
+      mergeOverlay: vi.fn(),
+      setDictionary: vi.fn(),
+      resetDictionary: vi.fn(),
+    }));
+
+    const { onRubyHover, dismissHover } = await import("./tooltip");
+
+    setBody(
+      '<ruby data-word="测试" data-hanzi-source="测试">' +
+        "<rb>测</rb><rt>cè</rt><rb>试</rt><rt>shì</rt></ruby>",
+    );
+    const ruby = document.querySelector("ruby[data-word]")!;
+
+    // Start hover; beginHover() sets gen=1, myGen=1.
+    const hoverPromise = onRubyHover(ruby);
+
+    // Simulate mouseout before the slow lookup resolves.
+    dismissHover(); // gen becomes 2
+
+    // Let the slow resolve happen.
+    await Promise.resolve();
+    await hoverPromise;
+
+    // gen is 2, myGen is 1 → mismatch, showTooltip must NOT have been called.
+    expect(document.querySelector('div[data-hanzi="tooltip"]')).toBeNull();
+    expect(lookupMock).toHaveBeenCalled();
+  });
+
+  it("new hover supersedes older in-flight lookup", async () => {
+    const slowMap = new Promise<Map<string, DictEntry[]>>((resolve) => {
+      setTimeout(() => resolve(new Map()), 500);
+    });
+    const lookupMock = vi.fn().mockReturnValue([{ t: "你好", p: "nǐ hǎo", d: ["hello"] }]);
+
+    vi.doMock("./dictionary", () => ({
+      loadDictionary: () => slowMap,
+      lookup: lookupMock,
+      buildMap: vi.fn(),
+      mergeOverlay: vi.fn(),
+      setDictionary: vi.fn(),
+      resetDictionary: vi.fn(),
+    }));
+
+    const { dismissHover, beginHover } = await import("./tooltip");
+
+    setBody(
+      '<ruby data-word="测试" data-hanzi-source="测试">' +
+        "<rb>测</rb><rt>cè</rt></ruby>",
+    );
+
+    // First hover: capture myGen=1 (beginHover increments gen to 1).
+    const gen1 = beginHover();
+    expect(gen1).toBe(1);
+
+    // Mouseout: gen becomes 2.
+    dismissHover();
+
+    // Second hover: gen becomes 3, myGen=3.
+    const gen3 = beginHover();
+    expect(gen3).toBe(3);
+
+    // gen1(1) < hoverGen(3) → stale lookup for first ruby would NOT show.
+    // gen3(3) == hoverGen(3) → current lookup for second ruby WOULD show.
+    expect(beginHover()).toBe(4);
+  });
+
+  it("getHoverGen reflects current counter state", async () => {
+    const { getHoverGen, beginHover, dismissHover } = await import("./tooltip");
+    expect(getHoverGen()).toBe(0);
+    beginHover();
+    expect(getHoverGen()).toBe(1);
+    dismissHover();
+    expect(getHoverGen()).toBe(2);
+    beginHover();
+    expect(getHoverGen()).toBe(3);
+  });
+});

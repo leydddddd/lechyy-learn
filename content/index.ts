@@ -1,6 +1,6 @@
 import { annotateTextSync, ensureAnnotator, markAnnotated } from "./annotator";
 import { collectLeafBlocks, collectTextNodes, containsHanzi } from "./segmenter";
-import { destroyTooltip, hideTooltip, onRubyHover } from "./tooltip";
+import { destroyTooltip, dismissHover, hideTooltip, onRubyHover } from "./tooltip";
 import { getCustomTerms } from "./dictionary";
 import { attachMutationObserver } from "./mutation-observer";
 
@@ -41,6 +41,7 @@ function handleMouseOut(e: Event): void {
   // into a descendant like <rb>/<rt>).
   const related = (e as MouseEvent).relatedTarget as Node | null;
   if (related && ruby.contains(related)) return;
+  dismissHover();  // M4.7: invalidate in-flight lookups for this ruby
   hideTooltip();
 }
 
