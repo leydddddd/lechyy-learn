@@ -14,6 +14,15 @@ const RETRY_COOLDOWN_MS = 3_000;
 let lastFailureTime = 0;
 
 /**
+ * Set of Element references that have already been annotated.
+ * Used by the MutationObserver to skip mutations inside Lechyy's own
+ * ruby markup (data-word / data-hanzi-source).  O(1) membership test;
+ * weak references via a WeakSet pattern (Set<Element> is fine for
+ * the small number of ruby nodes per viewport).
+ */
+export const annotatedNodes = new Set<Node>();
+
+/**
  * Ensure the pinyin-pro dictionary is loaded. Resolves exactly once — the
  * first call triggers a dynamic import of @pinyin-pro/data/complete (~10 MB),
  * subsequent calls return the same resolved promise.
@@ -271,4 +280,22 @@ export async function annotateTextNode(
   }
   parent.replaceChild(frag, node);
   return inserted;
+}
+
+// Mark all ruby elements in a fragment (or single element) as annotated
+// so the MutationObserver can skip future mutations inside them.
+export function markAnnotated(node: Node): void {
+  annotatedNodes.add(node);
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const el = node as Element;
+    // Descendants that are ruby elements
+    const roubles = el.querySelectorAll("[data-word]");
+    for (const r of Array.from(roubles)) {
+      annotatedNodes.add(r);
+    }
+  } else if (node.nodeType === 11 /* DOCUMENT_FRAGMENT_NODE */) {
+    for (const child of Array.from((node as DocumentFragment).children)) {
+      markAnnotated(child);
+    }
+  }
 }

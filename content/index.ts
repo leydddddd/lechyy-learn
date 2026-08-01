@@ -1,7 +1,8 @@
-import { annotateTextNode, ensureAnnotator } from "./annotator";
+import { annotateTextSync, ensureAnnotator, markAnnotated } from "./annotator";
 import { collectLeafBlocks, collectTextNodes, containsHanzi } from "./segmenter";
 import { destroyTooltip, hideTooltip, onRubyHover } from "./tooltip";
 import { getCustomTerms } from "./dictionary";
+import { attachMutationObserver } from "./mutation-observer";
 
 // Reinjection guard (0.4): mark that this script has loaded. On reinject, clean
 // up any pre-existing tooltip node.  Residual event-listener closures from older
@@ -52,6 +53,34 @@ export function attachHoverListeners(): void {
   hoverListenersAttached = true;
 }
 
+// M4.3 Bounded idle work: processes actions across requestIdleCallback slices.
+// Honors timeRemaining() > 10ms gate; when RIC is unavailable falls back to
+// setTimeout with a generous 50ms timeRemaining so the loop continues without
+// stalling in headless/test environments. Returns when `action` returns false
+// (all work consumed). Batch size is enforced by the caller (20 nodes/slice).
+function idleWhile(
+  action: (deadline: { timeRemaining(): number; didTimeout: boolean }) => boolean,
+  _batchSize?: number,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const ric = (globalThis as { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
+
+    const tick = (deadline: { timeRemaining(): number; didTimeout: boolean }) => {
+      if (deadline.didTimeout || deadline.timeRemaining() > 10) {
+        if (!action(deadline)) {
+          resolve();
+          return;
+        }
+      }
+      if (ric) ric(tick);
+      else setTimeout(() => tick({ timeRemaining: () => 50, didTimeout: false }), 0);
+    };
+
+    if (ric) ric(tick);
+    else setTimeout(() => tick({ timeRemaining: () => 50, didTimeout: false }), 0);
+  });
+}
+
 // Idle callback with graceful fallback. requestIdleCallback is gated behind
 // a short setTimeout safety net because it can hang indefinitely in headless
 // browsers, testing environments, or on very busy pages.
@@ -87,18 +116,47 @@ function pageHasChinese(): boolean {
 // the viewport. This replaces the old wrapper-based approach: instead of
 // wrapping every text node at startup (N DOM mutations for N text nodes), we
 // watch the block element itself and only walk its descendants on intersection.
+// Nodes are processed in bounded idle slices: up to 20 per requestIdleCallback
+// tick, with a timeRemaining() > 10ms gate.
 async function annotateBlock(
   block: Element,
   customTerms: readonly string[],
 ): Promise<void> {
   const candidates = collectTextNodes(block);
   if (candidates.length === 0) return;
-  for (const { node } of candidates) {
-    try {
-      await annotateTextNode(node, customTerms);
-    } catch (err) {
-      console.error("Lechyy: annotate failed:", err instanceof Error ? err.message : String(err));
+
+  let idx = 0;
+  await idleWhile(() => {
+    let processed = 0;
+    while (idx < candidates.length && processed < 20) {
+      const { node } = candidates[idx++];
+      const parent = node.parentNode;
+      if (!parent) { processed++; continue; }
+      try {
+        const text = node.nodeValue ?? "";
+        const frag = annotateTextSync(text, customTerms);
+        parent.replaceChild(frag, node);
+      } catch (err) {
+        console.error("Lechyy: annotate failed:", err instanceof Error ? err.message : String(err));
+      }
+      processed++;
     }
+    return idx < candidates.length;
+  }, 20);
+}
+
+// Re-annotates after a MutationObserver enqueue. Works exactly like
+// annotateBlock but marks the resulting ruby elements so the observer
+// won't re-process them.
+async function annotateBlockWithMarking(
+  block: Element,
+  customTerms: readonly string[],
+): Promise<void> {
+  await annotateBlock(block, customTerms);
+  // Mark all ruby elements in this block as processed.
+  const roubles = block.querySelectorAll("ruby[data-word]");
+  for (const ruby of Array.from(roubles)) {
+    markAnnotated(ruby);
   }
 }
 
@@ -116,6 +174,25 @@ export async function runLensMode(): Promise<number> {
 
   attachHoverListeners();
 
+  // M4.4: Attach MutationObserver before first annotation so we don't miss
+  // dynamically injected content.  The observer enqueues added subtrees for
+  // annotation via the idle callback queue.
+  function enqueueMutationAnnotate(el: Element, ct: readonly string[]): void {
+    idle(() =>
+      annotateBlockWithMarking(el, ct).catch((err) =>
+        console.error(
+          "Lechyy: annotate failed:",
+          err instanceof Error ? err.message : String(err),
+        ),
+      ),
+    );
+  }
+  attachMutationObserver(
+    document.body,
+    enqueueMutationAnnotate,
+    Promise.resolve(customTerms as readonly string[]),
+  );
+
   // Collect leaf block elements containing CJK. On intersection, we walk only
   // that block's descendants for annotation -- no upfront per-text-node wrappers.
   const blocks = collectLeafBlocks(document.body);
@@ -132,7 +209,7 @@ export async function runLensMode(): Promise<number> {
         io.unobserve(block);
         handled.add(block);
         idle(() =>
-          annotateBlock(block, customTerms).catch((err) =>
+          annotateBlockWithMarking(block, customTerms).catch((err) =>
             console.error(
               "Lechyy: annotate failed:",
               err instanceof Error ? err.message : String(err),
@@ -155,7 +232,7 @@ export async function runLensMode(): Promise<number> {
       rect.top < (globalThis.innerHeight ?? 1) + 1;
     if (inView) {
       idle(() =>
-        annotateBlock(element, customTerms).catch((err) =>
+        annotateBlockWithMarking(element, customTerms).catch((err) =>
           console.error(
             "Lechyy: annotate failed:",
             err instanceof Error ? err.message : String(err),
