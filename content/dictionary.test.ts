@@ -8,7 +8,9 @@ import {
   mergeOverlay,
   resetDictionary,
   setDictionary,
+  setLruSize,
   setUserEntry,
+  ShardedDictionary,
   type DictEntry,
 } from "./dictionary";
 
@@ -429,5 +431,181 @@ describe("placeholder data contract (M0.1)", () => {
     expect(warnSpy.mock.calls[0][0]).toContain("[lechyy]");
     expect(warnSpy.mock.calls[0][0]).toContain("placeholder");
     warnSpy.mockRestore();
+  });
+});
+
+describe("ShardedDictionary (M4.5)", () => {
+  function make(entries: Record<string, DictEntry[]>, size: number = 64): ShardedDictionary {
+    return new ShardedDictionary(entries, size);
+  }
+
+  it("looks up entries by lazily building shards on first access", () => {
+    const sd = make({
+      你好: [entry("你好", "nǐ hǎo", ["hello"])],
+      世界: [entry("世界", "shì jiè", ["world"])],
+      苹果: [entry("蘋果", "píng guǒ", ["apple"])],
+      香蕉: [entry("香蕉", "xiāng jiāo", ["banana"])],
+    });
+    // No shard built yet
+    expect(sd.hasShard("你")).toBe(false);
+    expect(sd.hasShard("世")).toBe(false);
+
+    // First lookup builds the 你-shard
+    const r1 = lookup(sd, "你好");
+    expect(r1).not.toBeNull();
+    expect(sd.hasShard("你")).toBe(true);
+    expect(sd.hasShard("世")).toBe(false);
+
+    // Second lookup uses a different shard
+    const r2 = lookup(sd, "世界");
+    expect(r2).not.toBeNull();
+    expect(sd.hasShard("世")).toBe(true);
+    expect(sd.hasShard("苹")).toBe(false);
+
+    // Lookup in already-built shard returns immediately
+    const r3 = lookup(sd, "苹果");
+    expect(r3).not.toBeNull();
+    expect(sd.hasShard("苹")).toBe(true);
+  });
+
+  it("returns null for unknown word in cached shard", () => {
+    const sd = make({
+      测试: [entry("測試", "cè shì", ["test"])],
+    });
+    lookup(sd, "测试");
+    expect(lookup(sd, "未知")).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    const sd = make({
+      空: [entry("空", "kōng", ["empty"])],
+    });
+    expect(lookup(sd, "")).toBeNull();
+  });
+
+  it("respects LRU size limit", () => {
+    const sd = make({
+      一: [entry("一", "yī", ["one"])],
+      二: [entry("二", "èr", ["two"])],
+      三: [entry("三", "sān", ["three"])],
+    }, 2);
+    lookup(sd, "一");
+    lookup(sd, "二");
+    expect(sd.size).toBe(2);
+    // Third shard evicts the first
+    lookup(sd, "三");
+    expect(sd.size).toBe(2);
+    // First shard is gone
+    expect(sd.hasShard("一")).toBe(false);
+    expect(sd.hasShard("二")).toBe(true);
+    expect(sd.hasShard("三")).toBe(true);
+  });
+
+  it("LRU reuses already-cached shard on repeated access", () => {
+    const sd = make({
+      大: [entry("大", "dà", ["big"])],
+      小: [entry("小", "xiǎo", ["small"])],
+      新: [entry("新", "xīn", ["new"])],
+    }, 2);
+    lookup(sd, "大");
+    lookup(sd, "小");
+    expect(sd.size).toBe(2);
+    // Re-access 大 (LRU recency update)
+    lookup(sd, "大");
+    lookup(sd, "新");
+    // Should evict 小 (least recently used)
+    expect(sd.hasShard("小")).toBe(false);
+    expect(sd.hasShard("大")).toBe(true);
+    expect(sd.hasShard("新")).toBe(true);
+  });
+
+  it("handles multi-character words using first-char shard", () => {
+    const sd = make({
+      青云宗: [entry("青雲宗", "qīng yún zōng", ["Azure Cloud Sect"])],
+      青云: [entry("青雲", "qīng yún", ["azure clouds"])],
+      青: [entry("青", "qīng", ["cyan/green"])],
+    });
+    expect(lookup(sd, "青云宗")).not.toBeNull();
+    expect(lookup(sd, "青云")).not.toBeNull();
+    expect(lookup(sd, "青")).not.toBeNull();
+    // Only the 青 shard is ever needed
+    expect(sd.size).toBe(1);
+  });
+
+  it("returns correct entry for words that share a leading character", () => {
+    const sd = make({
+      大: [entry("大", "dà", ["big"])],
+      大小: [entry("大小", "dà xiǎo", ["size"])],
+      大地: [entry("大地", "dà dì", ["earth/ground"])],
+    });
+    expect(lookup(sd, "大")).not.toBeNull();
+    expect(lookup(sd, "大小")).not.toBeNull();
+    expect(lookup(sd, "大地")).not.toBeNull();
+    expect(sd.size).toBe(1);
+  });
+});
+
+describe("lookup with ShardedDictionary and plain Map", () => {
+  it("lookup works with a plain Map (backward compat)", () => {
+    const m = buildMap({
+      测试: [entry("測試", "cè shì", ["test"])],
+    });
+    expect(lookup(m, "测试")![0].d).toEqual(["test"]);
+    expect(lookup(m, "未知")).toBeNull();
+  });
+
+  it("lookup works with a ShardedDictionary", () => {
+    const sd = new ShardedDictionary({
+      测试: [entry("測試", "cè shì", ["test"])],
+    }, 64);
+    expect(lookup(sd, "测试")![0].d).toEqual(["test"]);
+    expect(lookup(sd, "未知")).toBeNull();
+  });
+});
+
+describe("loadDictionary with sharding (M4.5)", () => {
+  beforeEach(() => {
+    resetDictionary();
+    setLruSize(64);
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    resetDictionary();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns a ShardedDictionary when fetching from JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        v: 1,
+        entries: {
+          你好: [{ t: "你好", p: "nǐ hǎo", d: ["hello"] }],
+          世界: [{ t: "世界", p: "shì jiè", d: ["world"] }],
+        },
+      }),
+    }));
+    const { loadDictionary } = await import("./dictionary");
+    const dict = await loadDictionary();
+    // Should be a ShardedDictionary, not a plain Map
+    expect(dict).toBeInstanceOf(ShardedDictionary);
+    expect(lookup(dict, "你好")).not.toBeNull();
+    expect(lookup(dict, "世界")).not.toBeNull();
+    // Both shards cached
+    expect((dict as ShardedDictionary).hasShard("你")).toBe(true);
+    expect((dict as ShardedDictionary).hasShard("世")).toBe(true);
+  });
+
+  it("setDictionary still injects a plain Map for tests", async () => {
+    const m = buildMap({
+      注入: [entry("注入", "zhù rù", ["injected"])],
+    });
+    setDictionary(m);
+    const { loadDictionary } = await import("./dictionary");
+    const dict = await loadDictionary();
+    // Should be the injected plain Map
+    expect(dict).toBeInstanceOf(Map);
+    expect(lookup(dict, "注入")![0].d).toEqual(["injected"]);
   });
 });

@@ -11,6 +11,14 @@
 // The optional data/user-dict.json seed file is also merged if present (import
 // format, also listed as web_accessible_resource). Storage entries win over
 // seed-file entries, and both win over CEDICT.
+//
+// M4.5: Lazy LRU shard cache. The full ~12MB JSON is stored as a plain
+// Record and parsed into per-char shards on first .get() access. Only shards
+// actually accessed by the user's hovered words are held in an LRU cache (max
+// 64 shards by default), so typical reading sessions hold only a fraction of
+// the dictionary in heap. loadDictionary() returns a DictLike (Map |
+// ShardedDictionary) with a .get() method so it remains drop-in compatible
+// with lookup() and every existing test.
 
 import type { CedictJson, DictEntry } from "../scripts/build-dict";
 
@@ -20,8 +28,134 @@ const CEDICT_RESOURCE = "cedict.json";
 const USER_DICT_RESOURCE = "user-dict.json";
 const STORAGE_KEY = "userDict";
 
-let dictMap: Map<string, DictEntry[]> | null = null;
-let loadPromise: Promise<Map<string, DictEntry[]>> | null = null;
+// M4.5: Lazy LRU shard cache for CEDICT.
+const DEFAULT_LRU_SIZE = 64;
+let lruSizeConfig = DEFAULT_LRU_SIZE;
+
+// Exposed so tests can override the LRU size for bounded-memory tests.
+export function setLruSize(n: number): void {
+  lruSizeConfig = n;
+}
+
+// Lightweight LRU wrapper around a plain Map. Evicts oldest on insert when full.
+class LruMap {
+  private cache: Map<string, Map<string, DictEntry[]>>;
+  private maxSize: number;
+
+  constructor(maxSize: number) {
+    this.maxSize = maxSize;
+    this.cache = new Map();
+  }
+
+  get(key: string): Map<string, DictEntry[]> | undefined {
+    const val = this.cache.get(key);
+    if (!val) return undefined;
+    // Move to end (most recently used)
+    this.cache.delete(key);
+    this.cache.set(key, val);
+    return val;
+  }
+
+  set(key: string, val: Map<string, DictEntry[]>): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict oldest (first entry in insertion order)
+      const oldest = this.cache.keys().next();
+      if (oldest.done === false) this.cache.delete(oldest.value);
+    }
+    this.cache.set(key, val);
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: string): void {
+    this.cache.delete(key);
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+
+/**
+ * A lazily-sharded dictionary that presents a Map-like .get() interface.
+ *
+ * Under the hood it stores the raw entries as a plain `Record<string, DictEntry[]>`
+ * (not a `Map`).  When `.get(word)` is called, it checks the shard cache for the
+ * leading-hanzi shard, building it on demand if absent.
+ *
+ * Exported for tests so they can inspect shards without loading the full map.
+ */
+export class ShardedDictionary {
+  private raw: Record<string, DictEntry[]>;
+  private shards: LruMap;
+
+  constructor(entries: Record<string, DictEntry[]>, maxSize: number) {
+    this.raw = entries;
+    this.shards = new LruMap(maxSize);
+  }
+
+  /**
+   * Get entry for a word. Builds the leading-character shard lazily if needed.
+   */
+  get(word: string): DictEntry[] | undefined {
+    if (!word.length) return undefined;
+    const firstChar = word.charAt(0);
+
+    let shard = this.shards.get(firstChar);
+    if (!shard) {
+      shard = buildCharacterShard(this.raw, firstChar);
+      this.shards.set(firstChar, shard);
+    }
+    return shard.get(word);
+  }
+
+  /**
+   * Get a shard by leading character (for tests).
+   */
+  getShard(char: string): Map<string, DictEntry[]> | undefined {
+    return this.shards.get(char);
+  }
+
+  /**
+   * Check if a shard exists in the cache.
+   */
+  hasShard(char: string): boolean {
+    return this.shards.has(char);
+  }
+
+  get size(): number {
+    return this.shards.size;
+  }
+}
+
+/**
+ * Build a shard Map for entries whose key starts with `char`.
+ */
+function buildCharacterShard(
+  entries: Record<string, DictEntry[]>,
+  char: string,
+): Map<string, DictEntry[]> {
+  const shard = new Map<string, DictEntry[]>();
+  for (const [key, value] of Object.entries(entries)) {
+    if (key.charAt(0) === char) {
+      if (value.length > 0) shard.set(key, value);
+    }
+  }
+  return shard;
+}
+
+// Module-level state for loadDictionary/sharding. When running in production
+// (fetched JSON), loadDictionary creates a ShardedDictionary so the ~12MB JSON
+// is never fully materialised in heap. Tests that inject a Map via
+// setDictionary() cause that map to be returned directly.
+type DictLike = Map<string, DictEntry[]> | ShardedDictionary;
+
+let dictSource: DictLike | null = null;
+let loadPromise: Promise<DictLike> | null = null;
 
 // Build a Map from the raw entries object. Pure — exported for tests so they
 // can construct a dictionary without hitting the network.
@@ -48,10 +182,10 @@ export function mergeOverlay(
 // Returns null when there is no entry — callers use this to trigger the
 // per-character pinyin fallback (PLAN §4.4).
 export function lookup(
-  dict: Map<string, DictEntry[]>,
+  dict: Map<string, DictEntry[]> | ShardedDictionary,
   word: string,
 ): DictEntry[] | null {
-  const entries = dict.get(word);
+  const entries = "get" in dict ? dict.get(word) : undefined;
   if (!entries || entries.length === 0) return null;
   return entries;
 }
@@ -149,11 +283,16 @@ export async function getCustomTerms(): Promise<string[]> {
   return Object.keys(entries).sort((a, b) => b.length - a.length || a.localeCompare(b));
 }
 
-// Load CEDICT + optional user-dict overlay into the module-level Map. The
-// promise is cached so subsequent calls reuse the same load. Errors during
-// user-dict load are swallowed (overlay is optional); CEDICT errors propagate.
-export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
-  if (dictMap) return dictMap;
+// Load CEDICT + optional user-dict overlay into the module-level dict source.
+// The promise is cached so subsequent calls reuse the same load.
+// Errors during user-dict load are swallowed (overlay is optional); CEDICT
+// errors propagate.
+//
+// Returns either a ShardedDictionary (production path) or an injected Map
+// (test/injected path). Returns something with .get() for drop-in lookup()
+// compatibility.
+export async function loadDictionary(): Promise<DictLike> {
+  if (dictSource) return dictSource;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
@@ -164,14 +303,16 @@ export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
     if (isPlaceholder(raw)) {
       console.warn("[lechyy] cedict.json is placeholder data — tooltips will be inaccurate. Run npm run build:dict to install the real CC-CEDICT dictionary.");
     }
-    let map = buildMap(raw.entries);
+
+    // Start with base CEDICT as a plain Map (needed for mergeOverlay which takes Map<>)
+    let mergedMap = buildMap(raw.entries as Record<string, DictEntry[]>);
 
     // M3.5 overlay: seed file first (optional import format), then storage
     // on top so user-created entries always win over both seed and CEDICT.
     try {
       const overlayRaw = await fetchJson(USER_DICT_RESOURCE);
       if (overlayRaw && isEntryRecord(overlayRaw)) {
-        map = mergeOverlay(map, overlayRaw);
+        mergedMap = mergeOverlay(mergedMap, overlayRaw as Record<string, DictEntry[]>);
       }
     } catch {
       // No user dict seed file — expected. Not an error.
@@ -179,11 +320,19 @@ export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
 
     const userEntries = await getUserDictEntries();
     if (userEntries) {
-      map = mergeOverlay(map, userEntries);
+      mergedMap = mergeOverlay(mergedMap, userEntries);
     }
 
-    dictMap = map;
-    return map;
+    // Convert the merged plain Map to a plain Record, then wrap in ShardedDictionary.
+    // The ShardedDictionary stores entries as a simple Record (no Map overhead)
+    // and builds per-char shards only on first .get() access.
+    const mergedRecord: Record<string, DictEntry[]> = {};
+    for (const [k, v] of mergedMap) {
+      mergedRecord[k] = v;
+    }
+    dictSource = new ShardedDictionary(mergedRecord, lruSizeConfig);
+
+    return dictSource;
   })();
 
   try {
@@ -198,12 +347,12 @@ export async function loadDictionary(): Promise<Map<string, DictEntry[]>> {
 // Test/programmatic injection: set the dictionary directly, bypassing fetch.
 // Useful for unit tests that want to exercise lookup without the real JSON.
 export function setDictionary(map: Map<string, DictEntry[]>): void {
-  dictMap = map;
+  dictSource = map;
   loadPromise = Promise.resolve(map);
 }
 
 // Reset module state — used by tests to ensure isolation between cases.
 export function resetDictionary(): void {
-  dictMap = null;
+  dictSource = null;
   loadPromise = null;
 }
