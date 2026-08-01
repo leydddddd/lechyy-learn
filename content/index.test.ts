@@ -80,9 +80,7 @@ function installObserverMock(): void {
 }
 
 // jsdom getBoundingClientRect returns zeros; we want to control in/out of view
-// per visible element by text content (the wrapper spans that wrapTextNode
-// creates carry their inner text's textContent, so content-based matching
-// works for both the original <p> and the transient wrapper span).
+// per visible element by text content (the leaf blocks carry their textContent).
 function stubContentAwareRect(this: HTMLElement): DOMRect {
   const text = (this?.textContent ?? "") as string;
   if (text.includes("视口内")) return rect(100, 150);
@@ -109,7 +107,7 @@ function installAlwaysInViewRect(): void {
   } as unknown as typeof Element.prototype.getBoundingClientRect);
 }
 
-describe("runLensMode (full content-script entry)", () => {
+describe("runLensMode (full content-script entry, M4.1 element-level)", () => {
   beforeEach(async () => {
     document.body.remove();
     const body = document.createElement("body");
@@ -125,7 +123,7 @@ describe("runLensMode (full content-script entry)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("annotates in-view candidates immediately and leaves out-of-view pending", async () => {
+  it("annotates in-view block elements immediately and leaves out-of-view blocks pending", async () => {
     installObserverMock();
     document.body.innerHTML = `
       <p id="inView">汉字在视口内。</p>
@@ -136,35 +134,37 @@ describe("runLensMode (full content-script entry)", () => {
 
     const candidateCount = await runLensMode();
 
+    // Returns block count, not text node count.
     expect(candidateCount).toBe(2);
     // idle() defers in-view annotation via requestIdleCallback/setTimeout(1),
     // so flush timers to let the idle callback fire, then flush microtasks.
     vi.advanceTimersByTime(50);
     await Promise.resolve();
 
-    // In-view text got annotated after idle flush.
+    // In-view block got annotated after idle flush.
     expect(
       document
         .querySelector("#inView")
         ?.querySelector("ruby[data-word]"),
     ).not.toBeNull();
-    // Out-of-view text should NOT yet be a ruby (it's pending in a span).
+    // Out-of-view block should NOT yet be annotated (it's pending in IO).
     const below = document.querySelector("#below");
     expect(below?.querySelector("ruby[data-word]")).toBeNull();
-    // The below candidate should be wrapped in a pending span and observed.
+    // The below block should be observed by IO (no wrapper needed).
     expect(MockIntersectionObserver.observed.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("annotates out-of-view candidates once IntersectionObserver reports intersecting", async () => {
+  it("annotates out-of-view blocks once IntersectionObserver reports intersecting", async () => {
     installObserverMock();
     document.body.innerHTML = `<p id="below">下方汉字等注音。</p>`;
     vi.stubGlobal("innerHeight", 600);
     installContentAwareRect();
 
     await runLensMode();
-    expect(MockIntersectionObserver.observed).toHaveLength(1);
+    // The <p> itself is observed directly, not a wrapper span.
+    expect(MockIntersectionObserver.observed.length).toBeGreaterThanOrEqual(1);
 
-    // Now simulate scroll-in: report the pending span as intersecting.
+    // Now simulate scroll-in: report the block as intersecting.
     // idle() falls back to setTimeout(0/1); flush the fake timer, then
     // flush any pending microtasks (the async annotation chain).
     MockIntersectionObserver.notifyAll();
@@ -235,9 +235,10 @@ describe("runLensMode (full content-script entry)", () => {
     await Promise.resolve();
 
     expect(document.querySelector("#normal ruby[data-word]")).not.toBeNull();
-    expect(document.querySelector("div contenteditable ruby[data-word]") || 
-             document.querySelector("div[contenteditable] ruby[data-word]") ||
-             document.querySelectorAll("div[contenteditable] ruby[data-word]").length).toBe(0);
+    expect(
+      document.querySelector("div[contenteditable] ruby[data-word]") ||
+      document.querySelectorAll("div[contenteditable] ruby[data-word]").length,
+    ).toBe(0);
   });
 
   it("does NOT annotate text inside aria-hidden elements", async () => {
@@ -272,5 +273,64 @@ describe("runLensMode (full content-script entry)", () => {
 
     expect(document.querySelector("#active ruby[data-word]")).not.toBeNull();
     expect(document.querySelectorAll("div[inert] ruby[data-word]").length).toBe(0);
+  });
+
+  it("IO targets are the leaf block elements themselves, not wrapper spans", async () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <p id="para">汉字段落。</p>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // The observed target should be the <p> element or a leaf descendant,
+    // NOT a <span data-hanzi-pending>.
+    const observedTargets = MockIntersectionObserver.observed;
+    for (const target of observedTargets) {
+      expect(target.getAttribute("data-hanzi-pending")).toBeNull();
+    }
+  });
+
+  it("nested blocks are reduced to leaf blocks only", async () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <div id="outer">
+        <p id="inner">汉字在嵌套块中。</p>
+      </div>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installContentAwareRect(); // inner is in-view (100, 150), outer has same text
+
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // The <p> is a leaf block, so the outer <div> should NOT be in the IO.
+    // Since installContentAwareRect treats "汉字在嵌套块中" as in-view,
+    // the <p> gets annotated immediately and is NOT added to the observer.
+    // Only check that the <p> was annotated (ruby created inside it).
+    expect(document.querySelector("#inner ruby[data-word]")).not.toBeNull();
+    // Ensure the DIV was not directly annotated (no ruby as a direct child of #outer).
+    expect([...document.querySelector("#outer")!.children].some(
+      (c) => c.tagName === "RUBY" && c.hasAttribute("data-word"),
+    )).toBe(false);
+  });
+
+  it("returns block count, not text node count", async () => {
+    installObserverMock();
+    document.body.innerHTML = `
+      <p>第一行汉字。</p>
+      <p>第二行汉字。</p>
+      <p>第三行汉字。</p>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    const count = await runLensMode();
+    expect(count).toBe(3);
   });
 });

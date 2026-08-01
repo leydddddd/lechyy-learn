@@ -1,12 +1,12 @@
 import { annotateTextNode, ensureAnnotator } from "./annotator";
-import { collectTextNodes, containsHanzi } from "./segmenter";
+import { collectLeafBlocks, collectTextNodes, containsHanzi } from "./segmenter";
 import { destroyTooltip, hideTooltip, onRubyHover } from "./tooltip";
 import { getCustomTerms } from "./dictionary";
 
 // Reinjection guard (0.4): mark that this script has loaded. On reinject, clean
 // up any pre-existing tooltip node.  Residual event-listener closures from older
 // script instances are impossible to remove (addEventListener has no
-// "unregister-all" API), so we make them harmless — their closures reference a
+// "unregister-all" API), so we make them harmless -- their closures reference a
 // module-state object whose `tooltipEl` is now null, and `destroyTooltip` wipes
 // the DOM node.  Orphaned listeners remain on document.body but operate on a
 // now-detached element and do nothing.
@@ -21,8 +21,6 @@ if (document.documentElement.hasAttribute(LECHYY_LOADED_ATTR)) {
   hoverListenersAttached = false;
 }
 document.documentElement.setAttribute(LECHYY_LOADED_ATTR, "1");
-
-const PENDING_ATTR = "data-hanzi-pending";
 
 function closestRuby(target: EventTarget | null): Element | null {
   if (!(target instanceof Element)) return null;
@@ -85,86 +83,56 @@ function pageHasChinese(): boolean {
   return containsHanzi(document.body ? document.body.textContent ?? "" : "");
 }
 
-// Wrap a Text node in a <span data-hanzi-pending> wrapper so it has an Element
-// handle for IntersectionObserver (IO only watches Elements). The wrapper is
-// inline and transparent to layout. Returns the wrapper, or null if the node
-// had already been removed from the DOM (race vs SPA re-render).
-function wrapTextNode(node: Text): HTMLSpanElement | null {
-  const parent = node.parentNode;
-  if (!parent) return null;
-  const span = document.createElement("span");
-  span.setAttribute(PENDING_ATTR, "1");
-  parent.replaceChild(span, node);
-  span.appendChild(node);
-  return span;
-}
-
-// Annotate a pending wrapper: unwrap the inner Text, call the annotator which
-// replaces the Text with a ruby fragment, then drop the now-empty wrapper so
-// the original layout is restored.
-//
-// PENDING_ATTR guard: checked before the await to prevent duplicate annotation
-// if the same span is re-queued (e.g., by a repeated collectTextNodes call or
-// a future MutationObserver). If annotatePending itself is called twice on the
-// same span, the second invocation returns immediately at the guard — the
-// await on line 97 is the true work boundary, so the guard must be before it.
-//
-// DOM presence check: verifies the span is still in the document before
-// awaiting. If the span was removed (SPA navigation, user leaves page), the
-// annotation is skipped entirely so the floating idle callback doesn't mutate
-// a detached tree, parse a stale text node, or leak the promise.
-async function annotatePending(
-  span: HTMLSpanElement,
+// Annotate all CJK text nodes inside a block-level element that just entered
+// the viewport. This replaces the old wrapper-based approach: instead of
+// wrapping every text node at startup (N DOM mutations for N text nodes), we
+// watch the block element itself and only walk its descendants on intersection.
+async function annotateBlock(
+  block: Element,
   customTerms: readonly string[],
 ): Promise<void> {
-  if (!span.hasAttribute(PENDING_ATTR)) return; // already handled
-  if (!span.parentNode) return; // removed from DOM — skip
-  const textNode = span.firstChild;
-  try {
-    if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-      await annotateTextNode(textNode as Text, customTerms);
+  const candidates = collectTextNodes(block);
+  if (candidates.length === 0) return;
+  for (const { node } of candidates) {
+    try {
+      await annotateTextNode(node, customTerms);
+    } catch (err) {
+      console.error("Lechyy: annotate failed:", err instanceof Error ? err.message : String(err));
     }
-    span.removeAttribute(PENDING_ATTR);
-    while (span.firstChild) {
-      span.parentNode!.insertBefore(span.firstChild, span);
-    }
-    span.parentNode!.removeChild(span);
-  } catch {
-    // Annotation failed — leave span wrapped with PENDING_ATTR so a future
-    // collectTextNodes pass can pick it up and retry. The span is still in
-    // the DOM so it will be unobserve'd by the IntersectionObserver.
   }
 }
 
 // Public entry for programmatic callers (tests, future re-runs). Returns the
-// count of candidate text nodes found. Reads document.body at call time.
+// count of candidate block elements found. Reads document.body at call time.
 // Fetches custom terms from chrome.storage.once on first call (M3.5).
 export async function runLensMode(): Promise<number> {
   if (!document.body) return 0;
   if (!pageHasChinese()) return 0;
   await ensureAnnotator();
 
-  // M3.5: fetch custom terms once upfront. Empty array is a no-op —
+  // M3.5: fetch custom terms once upfront. Empty array is a no-op --
   // annotateTextSync/annotateText already treat [] as absent.
   const customTerms = await getCustomTerms();
 
   attachHoverListeners();
 
-  const candidates = collectTextNodes(document.body);
-  if (candidates.length === 0) return 0;
+  // Collect leaf block elements containing CJK. On intersection, we walk only
+  // that block's descendants for annotation -- no upfront per-text-node wrappers.
+  const blocks = collectLeafBlocks(document.body);
+  if (blocks.length === 0) return 0;
 
-  // Memory of observed pending wrappers so re-entrant calls (MutationObserver
-  // in M4) don't double-wrap. For M2 this is single-pass.
-  const handled = new WeakSet<Text>();
+  const handled = new WeakSet<Element>();
+  let queued = 0;
 
   const io = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        const span = entry.target as HTMLSpanElement;
-        io.unobserve(span);
+        const block = entry.target as Element;
+        io.unobserve(block);
+        handled.add(block);
         idle(() =>
-          annotatePending(span, customTerms).catch((err) =>
+          annotateBlock(block, customTerms).catch((err) =>
             console.error(
               "Lechyy: annotate failed:",
               err instanceof Error ? err.message : String(err),
@@ -176,21 +144,18 @@ export async function runLensMode(): Promise<number> {
     { rootMargin: "200px" },
   );
 
-  let queued = 0;
-  for (const { node } of candidates) {
-    if (handled.has(node)) continue;
-    handled.add(node);
-    const span = wrapTextNode(node);
-    if (!span) continue;
+  for (const { element } of blocks) {
+    if (handled.has(element)) continue;
+    handled.add(element);
     // If already in viewport on first pass, annotate now rather than waiting
     // for an IO fire-and-observe round-trip.
-    const rect = span.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
     const inView =
       rect.bottom > -1 &&
       rect.top < (globalThis.innerHeight ?? 1) + 1;
     if (inView) {
       idle(() =>
-        annotatePending(span, customTerms).catch((err) =>
+        annotateBlock(element, customTerms).catch((err) =>
           console.error(
             "Lechyy: annotate failed:",
             err instanceof Error ? err.message : String(err),
@@ -199,18 +164,18 @@ export async function runLensMode(): Promise<number> {
       );
       queued++;
     } else {
-      io.observe(span);
+      io.observe(element);
     }
   }
 
   console.info(
-    "Lechyy M2: lens mode started,",
-    candidates.length,
-    "candidate text nodes,",
+    "Lechyy M4.1: element-level lens mode started,",
+    blocks.length,
+    "block targets,",
     queued,
     "annotated immediately",
   );
-  return candidates.length;
+  return blocks.length;
 }
 
 // Auto-run when loaded as a real content script (not under vitest). vitest

@@ -46,6 +46,23 @@ export interface CollectedTextNode {
   text: string;
 }
 
+export interface CollectedBlock {
+  element: Element;
+  text: string;
+}
+
+// Block-level leaf elements that should be observed by IntersectionObserver.
+// We avoid observing everything — only elements that can contain text content
+// and have no sibling text nodes (pure leaf). This keeps the IO entry count
+// proportional to visible paragraphs/lines, not to individual text nodes.
+const OBSERVABLE_BLOCK_TAG = new Set([
+  "P", "LI", "DIV", "TD", "TH", "CAPTION",
+  "H1", "H2", "H3", "H4", "H5", "H6",
+  "SPAN", "A", "LABEL", "FIGCAPTION", "LEGEND",
+  "BLOCKQUOTE", "DT", "DD", "OPTION", "PRE",
+  "CODE", "VAR", "SAMP", "KBD", "MARK",
+]);
+
 // Ancestors that make an element an editing surface — skip those text nodes
 // entirely so we don't corrupt live drafts in Notion-style editors.
 function isEditingSurface(el: Element): boolean {
@@ -113,4 +130,96 @@ export function collectTextNodes(root: Node): CollectedTextNode[] {
     current = walker.nextNode();
   }
   return out;
+}
+
+// Collect leaf block elements containing CJK for IntersectionObserver targets.
+// Instead of wrapping every text node, this finds block/leaf elements whose
+// combined textContent contains at least one CJK ideograph. These elements
+// serve as IO targets — on intersection, the caller walks the block's
+// descendants with collectTextNodes() and annotates only those.
+//
+// A candidate element passes if:
+// 1. It is a leaf (no block-level children that themselves contain CJK).
+// 2. It contains CJK in its textContent.
+// 3. It is not inside SKIP_TAGS or an editing surface.
+// 4. It does not already contain a <ruby[data-word]> descendant (already annotated).
+//
+// This eliminates the N wrapper-insertion cost on startup. The IO fires per
+// block element, not per text node. For a 100k-char page with ~500 paragraphs,
+// that's ~500 IO entries instead of potentially tens of thousands of spans.
+export function collectLeafBlocks(root: Node): CollectedBlock[] {
+  const ownerDocument =
+    root.nodeType === 9 ? (root as Document) : root.ownerDocument;
+  if (!ownerDocument) return [];
+
+  const results: CollectedBlock[] = [];
+
+  // First pass: find all block-level elements that could be IO targets.
+  // We traverse manually to handle leaf-detection properly.
+  function walk(node: Node, insideSkip: boolean): void {
+    if (node.nodeType === Node.COMMENT_NODE) return;
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element;
+      const tagName = el.tagName;
+
+      // Hard skip: never descend into these subtrees
+      if (SKIP_TAGS.has(tagName)) return;
+
+      // Editing surface: skip
+      if (!insideSkip && isEditingSurface(el)) {
+        // Still descend into inline children inside an editing surface
+        // to find any non-editable descendants, but skip the surface itself.
+        // Actually, once we hit an editing surface, we skip the whole subtree.
+        return;
+      }
+
+      // Already annotated: skip (its descendants are either text or ruby elements)
+      if (el.querySelector && el.querySelector("ruby[data-word]")) {
+        return;
+      }
+
+      const isSkipTag = insideSkip || SKIP_TAGS.has(tagName);
+
+      // Check if this is an observable block element
+      const isObservable = OBSERVABLE_BLOCK_TAG.has(tagName);
+
+      if (isObservable) {
+        // Check if it has block-level children (descendants that could themselves be targets)
+        // Block-level: div, p, pre, h1-h6, ul, ol, li, table cells, blockquote, etc.
+        const hasBlockChildren = Array.from(el.children).some(
+          (child) => isBlockElement(child as Element) && !SKIP_TAGS.has(child.tagName),
+        );
+
+        if (hasBlockChildren) {
+          // Not a leaf — recurse into children (but not the block container itself)
+          for (const child of el.childNodes) {
+            walk(child, isSkipTag);
+          }
+        } else if (containsHanzi(el.textContent ?? "")) {
+          // This is a potential leaf — check if it contains CJK
+          results.push({ element: el, text: el.textContent ?? "" });
+        }
+      } else {
+        // Not an observable block tag — recurse into children
+        for (const child of el.childNodes) {
+          walk(child, isSkipTag);
+        }
+      }
+    }
+  }
+
+  walk(root, false);
+  return results;
+}
+
+// Check if an element is block-level (should not be a child-of-another-observable)
+function isBlockElement(el: Element): boolean {
+  const tagName = el.tagName;
+  return new Set([
+    "DIV", "P", "PRE", "H1", "H2", "H3", "H4", "H5", "H6",
+    "UL", "OL", "LI", "TABLE", "TR", "TD", "TH", "THEAD", "TBODY",
+    "TFOOT", "BLOCKQUOTE", "DL", "DT", "DD", "SECTION", "ARTICLE",
+    "ASIDE", "HEADER", "FOOTER", "MAIN", "NAV", "FIGURE", "ADDRESS", "HR", "BR",
+  ]).has(tagName);
 }
