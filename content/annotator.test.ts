@@ -1,7 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  ANNOTATED_ATTR,
   collectTextNodes,
   containsHanzi,
   SKIP_TAGS,
@@ -61,14 +60,20 @@ describe("collectTextNodes", () => {
     expect(nodes[0].text).toBe("外面有汉字");
   });
 
-  it("does not descend into already-annotated parents", () => {
+  it("does not re-collect text inside ruby elements (SKIP_TAGS)", () => {
     setBody(`
       <p>普通文本汉字</p>
-      <div ${ANNOTATED_ATTR}="1">已标注汉字不应再处理</div>
+      <ruby data-word="已标注"><rb>已标注</rb><rt>yǐ biāo zhù</rt></ruby>
     `);
     const nodes = collectTextNodes(document.body);
     expect(nodes).toHaveLength(1);
     expect(nodes[0].text).toBe("普通文本汉字");
+  });
+
+  it("multiple text nodes in same parent are all collected", () => {
+    setBody('<p>汉字<b>汉字</b>汉字</p>');
+    const nodes = collectTextNodes(document.body);
+    expect(nodes).toHaveLength(3);
   });
 
   it("has ruby in the skip set", () => {
@@ -281,15 +286,13 @@ describe("annotateText with customTerms (M3.5)", () => {
 });
 
 describe("annotateTextNode", () => {
-  it("replaces the text node with a ruby fragment and marks the parent", async () => {
+  it("replaces the text node with a ruby fragment", async () => {
     setBody('<p id="p">他睡着了。</p>');
     const p = document.getElementById("p")!;
     const textNode = p.firstChild as Text;
     expect(textNode.nodeType).toBe(Node.TEXT_NODE);
     const inserted = await annotateTextNode(textNode);
     expect(inserted.length).toBeGreaterThan(0);
-    // Parent is now marked annotated.
-    expect(p.hasAttribute(ANNOTATED_ATTR)).toBe(true);
     // Text node is gone, ruby inserted in its place.
     expect(p.querySelector("ruby[data-word]")).not.toBeNull();
     // Text node detached.

@@ -23,9 +23,7 @@ export function containsHanzi(s: string): boolean {
 }
 
 // Tags whose subtree we never descend into. Add `ruby` so we don't re-process
-// already-annotated text (the <rb> holds the original hanzi). The
-// data-hanzi-annotated attribute on a parent is a second guard for nodes we
-// replaced with a fragment.
+// already-annotated text (the <rb> holds the original hanzi).
 export const SKIP_TAGS = new Set([
   "SCRIPT",
   "STYLE",
@@ -42,8 +40,6 @@ export const SKIP_TAGS = new Set([
   "NOSCRIPT",
   "TEMPLATE",
 ]);
-
-export const ANNOTATED_ATTR = "data-hanzi-annotated";
 
 export interface CollectedTextNode {
   node: Text;
@@ -64,8 +60,8 @@ function isEditingSurface(el: Element): boolean {
 }
 
 // Walks `root` for text nodes containing at least one CJK ideograph, skipping
-// subtrees under SKIP_TAGS and subtrees already marked annotated. Returns a
-// flat array of { node, text }. Pure w.r.t. the DOM: it does not mutate.
+// subtrees under SKIP_TAGS. Returns a flat array of { node, text }. Pure w.r.t.
+// the DOM: it does not mutate.
 export function collectTextNodes(root: Node): CollectedTextNode[] {
   const ownerDocument =
     root.nodeType === 9 ? (root as Document) : root.ownerDocument;
@@ -79,9 +75,6 @@ export function collectTextNodes(root: Node): CollectedTextNode[] {
         if (candidate.nodeType === Node.ELEMENT_NODE) {
           const el = candidate as Element;
           if (SKIP_TAGS.has(el.tagName)) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          if (el.hasAttribute && el.hasAttribute(ANNOTATED_ATTR)) {
             return NodeFilter.FILTER_REJECT;
           }
           if (isEditingSurface(el)) {

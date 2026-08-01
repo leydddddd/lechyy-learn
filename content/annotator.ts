@@ -1,6 +1,6 @@
 import { addDict, OutputFormat, segment } from "pinyin-pro";
 
-import { ANNOTATED_ATTR, containsHanzi, toneClass } from "./segmenter";
+import { containsHanzi, toneClass } from "./segmenter";
 
 let ready: Promise<void> | RetryState | null = null;
 
@@ -138,8 +138,7 @@ function segmentIntoWords(text: string): CharInfo[][] {
 // </rt>...</ruby>. Non-hanzi tokens (punctuation, Latin, numbers) are emitted as
 // plain text nodes to preserve the original layout exactly.
 // Marks the ruby element with data-hanzi-source so future revert logic has the
-// original text available; marks the parent with data-hanzi-annotated after the
-// caller replaces the node.
+// original text available.
 //
 // If `customTerms` is provided, the text is pre-split on user-defined terms
 // (longest-match first) before the general segmenter. Custom terms are rendered
@@ -248,9 +247,11 @@ function _appendWords(frag: DocumentFragment, words: CharInfo[][]): void {
   }
 }
 
-// Replace a Text node with the annotated fragment and mark the parent as
-// processed so collectTextNodes skips it on later runs. Returns the ruby
-// elements inserted (for the caller to wire hover handlers in M3).
+// Replace a Text node with the annotated fragment. Returns the ruby elements
+// inserted (for the caller to wire hover handlers in M3). The original Text
+// node is replaced (gone), so collectTextNodes cannot see it again. Ruby
+// elements self-skip via SKIP_TAGS in the TreeWalker.
+// Ensures annotator is loaded, then performs synchronous annotation.
 // Ensures annotator is loaded, then performs synchronous annotation.
 // When `customTerms` is provided, those terms are pre-split (longest-match
 // greedy) so they render as single ruby elements and their definitions win
@@ -269,8 +270,5 @@ export async function annotateTextNode(
     if (child.tagName === "RUBY") inserted.push(child);
   }
   parent.replaceChild(frag, node);
-  if (parent.nodeType === Node.ELEMENT_NODE) {
-    (parent as Element).setAttribute(ANNOTATED_ATTR, "1");
-  }
   return inserted;
 }
