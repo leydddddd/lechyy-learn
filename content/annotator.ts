@@ -252,12 +252,18 @@ function _appendWords(frag: DocumentFragment, words: CharInfo[][]): void {
 // processed so collectTextNodes skips it on later runs. Returns the ruby
 // elements inserted (for the caller to wire hover handlers in M3).
 // Ensures annotator is loaded, then performs synchronous annotation.
-export async function annotateTextNode(node: Text): Promise<Element[]> {
+// When `customTerms` is provided, those terms are pre-split (longest-match
+// greedy) so they render as single ruby elements and their definitions win
+// from the dictionary (merged at load time in dictionary.ts).
+export async function annotateTextNode(
+  node: Text,
+  customTerms?: readonly string[],
+): Promise<Element[]> {
   const parent = node.parentNode;
   if (!parent) return [];
   await ensureAnnotator();
   const text = node.nodeValue ?? "";
-  const frag = annotateTextSync(text);
+  const frag = annotateTextSync(text, customTerms);
   const inserted: Element[] = [];
   for (const child of Array.from(frag.children)) {
     if (child.tagName === "RUBY") inserted.push(child);

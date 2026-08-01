@@ -1,6 +1,7 @@
 import { annotateTextNode, ensureAnnotator } from "./annotator";
 import { collectTextNodes, containsHanzi } from "./segmenter";
 import { destroyTooltip, hideTooltip, onRubyHover } from "./tooltip";
+import { getCustomTerms } from "./dictionary";
 
 // Reinjection guard (0.4): mark that this script has loaded. On reinject, clean
 // up any pre-existing tooltip node.  Residual event-listener closures from older
@@ -112,13 +113,16 @@ function wrapTextNode(node: Text): HTMLSpanElement | null {
 // awaiting. If the span was removed (SPA navigation, user leaves page), the
 // annotation is skipped entirely so the floating idle callback doesn't mutate
 // a detached tree, parse a stale text node, or leak the promise.
-async function annotatePending(span: HTMLSpanElement): Promise<void> {
+async function annotatePending(
+  span: HTMLSpanElement,
+  customTerms: readonly string[],
+): Promise<void> {
   if (!span.hasAttribute(PENDING_ATTR)) return; // already handled
   if (!span.parentNode) return; // removed from DOM — skip
   const textNode = span.firstChild;
   try {
     if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-      await annotateTextNode(textNode as Text);
+      await annotateTextNode(textNode as Text, customTerms);
     }
     span.removeAttribute(PENDING_ATTR);
     while (span.firstChild) {
@@ -134,10 +138,16 @@ async function annotatePending(span: HTMLSpanElement): Promise<void> {
 
 // Public entry for programmatic callers (tests, future re-runs). Returns the
 // count of candidate text nodes found. Reads document.body at call time.
+// Fetches custom terms from chrome.storage.once on first call (M3.5).
 export async function runLensMode(): Promise<number> {
   if (!document.body) return 0;
   if (!pageHasChinese()) return 0;
   await ensureAnnotator();
+
+  // M3.5: fetch custom terms once upfront. Empty array is a no-op —
+  // annotateTextSync/annotateText already treat [] as absent.
+  const customTerms = await getCustomTerms();
+
   attachHoverListeners();
 
   const candidates = collectTextNodes(document.body);
@@ -154,7 +164,7 @@ export async function runLensMode(): Promise<number> {
         const span = entry.target as HTMLSpanElement;
         io.unobserve(span);
         idle(() =>
-          annotatePending(span).catch((err) =>
+          annotatePending(span, customTerms).catch((err) =>
             console.error(
               "Lechyy: annotate failed:",
               err instanceof Error ? err.message : String(err),
@@ -180,7 +190,7 @@ export async function runLensMode(): Promise<number> {
       rect.top < (globalThis.innerHeight ?? 1) + 1;
     if (inView) {
       idle(() =>
-        annotatePending(span).catch((err) =>
+        annotatePending(span, customTerms).catch((err) =>
           console.error(
             "Lechyy: annotate failed:",
             err instanceof Error ? err.message : String(err),
