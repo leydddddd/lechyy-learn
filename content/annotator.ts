@@ -146,7 +146,22 @@ function segmentIntoWords(text: string): CharInfo[][] {
 // as a single ruby element with the user's pinyin from the dictionary (via
 // lookup) rather than pinyin-pro's output. Omit `customTerms` for unchanged
 // behavior (or pass an empty array).
-export function annotateText(
+//
+// Async because it calls ensureAnnotator() which loads pinyin-pro dict on first
+// call. Subsequent calls are fast (cached promise).
+export async function annotateText(
+  src: string,
+  customTerms?: readonly string[],
+): Promise<DocumentFragment> {
+  await ensureAnnotator();
+  return annotateTextSync(src, customTerms);
+}
+
+// Synchronous subset of annotateText. No await. Use this when the caller knows
+// the annotator is already ready (e.g., annotatePending calls ensureAnnotator()
+// once upfront, then uses this for all nodes). Exported for tests that want
+// synchronous annotation without awaiting ensureAnnotator.
+export function annotateTextSync(
   src: string,
   customTerms?: readonly string[],
 ): DocumentFragment {
@@ -236,15 +251,13 @@ function _appendWords(frag: DocumentFragment, words: CharInfo[][]): void {
 // Replace a Text node with the annotated fragment and mark the parent as
 // processed so collectTextNodes skips it on later runs. Returns the ruby
 // elements inserted (for the caller to wire hover handlers in M3).
-// Guards with ensureAnnotator() so it is safe for any caller, including
-// MutationObserver and programmatic callers, even if the dictionary has not
-// yet loaded.
+// Ensures annotator is loaded, then performs synchronous annotation.
 export async function annotateTextNode(node: Text): Promise<Element[]> {
-  await ensureAnnotator();
   const parent = node.parentNode;
   if (!parent) return [];
+  await ensureAnnotator();
   const text = node.nodeValue ?? "";
-  const frag = annotateText(text);
+  const frag = annotateTextSync(text);
   const inserted: Element[] = [];
   for (const child of Array.from(frag.children)) {
     if (child.tagName === "RUBY") inserted.push(child);

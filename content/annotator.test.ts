@@ -112,8 +112,8 @@ describe("ensureAnnotator", () => {
 });
 
 describe("annotateText", () => {
-  it("wraps multi-char hanzi words into a single ruby with multiple rb/rt pairs", () => {
-    const frag = annotateText("他睡着了。");
+  it("wraps multi-char hanzi words into a single ruby with multiple rb/rt pairs", async () => {
+    const frag = await annotateText("他睡着了。");
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     expect(rubies.length).toBeGreaterThan(0);
     // Find the "睡着" token (2-char word): one ruby, two rb, two rt.
@@ -125,8 +125,8 @@ describe("annotateText", () => {
     expect(rts).toEqual(["shuì", "zháo"]); // polyphone: 着 = zháo here
   });
 
-  it("emits non-CJK tokens as plain text nodes (no ruby)", () => {
-    const frag = annotateText("Web 小说 reading");
+  it("emits non-CJK tokens as plain text nodes (no ruby)", async () => {
+    const frag = await annotateText("Web 小说 reading");
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     // Only "小说" (and any 中文 sub-tokens) get ruby; "Web"/"reading" don't.
     const nonHanziText = Array.from(frag.childNodes)
@@ -139,8 +139,8 @@ describe("annotateText", () => {
     expect(rubies.length).toBeGreaterThan(0);
   });
 
-  it("passes CJK punctuation through as plain text, never as ruby", () => {
-    const frag = annotateText("汉字，汉字。");
+  it("passes CJK punctuation through as plain text, never as ruby", async () => {
+    const frag = await annotateText("汉字，汉字。");
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     for (const r of rubies) {
       const w = r.getAttribute("data-word") ?? "";
@@ -150,8 +150,8 @@ describe("annotateText", () => {
     }
   });
 
-  it("tags each rt with a tone-N class matching its pinyin", () => {
-    const frag = annotateText("汉字");
+  it("tags each rt with a tone-N class matching its pinyin", async () => {
+    const frag = await annotateText("汉字");
     const rts = Array.from(frag.querySelectorAll("rt"));
     for (const rt of rts) {
       const cls = rt.className;
@@ -159,8 +159,8 @@ describe("annotateText", () => {
     }
   });
 
-  it("stores original text in data-hanzi-source for future revert", () => {
-    const frag = annotateText("汉字");
+  it("stores original text in data-hanzi-source for future revert", async () => {
+    const frag = await annotateText("汉字");
     const ruby = frag.querySelector("ruby[data-word]")!;
     expect(ruby.getAttribute("data-hanzi-source")).toBeTruthy();
   });
@@ -231,9 +231,9 @@ describe("applyCustomSegments (M3.5 pre-segmentation)", () => {
 });
 
 describe("annotateText with customTerms (M3.5)", () => {
-  it("custom term produces a single ruby element with all chars inside", () => {
+  it("custom term produces a single ruby element with all chars inside", async () => {
     const terms = ["青云宗"];
-    const frag = annotateText("青云宗", terms);
+    const frag = await annotateText("青云宗", terms);
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     expect(rubies).toHaveLength(1);
     expect(rubies[0].getAttribute("data-word")).toBe("青云宗");
@@ -241,9 +241,9 @@ describe("annotateText with customTerms (M3.5)", () => {
     expect(rubies[0].querySelectorAll("rt")).toHaveLength(3);
   });
 
-  it("custom term + surrounding non-custom text both annotated", () => {
+  it("custom term + surrounding non-custom text both annotated", async () => {
     const terms = ["功法"];
-    const frag = annotateText("练功法入门", terms);
+    const frag = await annotateText("练功法入门", terms);
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     // 练, 功法, 入, 门 → pinyin-pro may combine 入门; check at least 功法 is present
     const gongfa = rubies.find((r) => r.getAttribute("data-word") === "功法");
@@ -251,9 +251,9 @@ describe("annotateText with customTerms (M3.5)", () => {
     expect(gongfa!.querySelectorAll("rb")).toHaveLength(2);
   });
 
-  it("no custom terms (or empty) produces same result as original annotateText", () => {
-    const frag1 = annotateText("汉字，汉字。");
-    const frag2 = annotateText("汉字，汉字。", []);
+  it("no custom terms (or empty) produces same result as original annotateText", async () => {
+    const frag1 = await annotateText("汉字，汉字。");
+    const frag2 = await annotateText("汉字，汉字。", []);
     const rubies1 = Array.from(frag1.querySelectorAll("ruby[data-word]"));
     const rubies2 = Array.from(frag2.querySelectorAll("ruby[data-word]"));
     expect(rubies1.length).toBe(rubies2.length);
@@ -262,10 +262,10 @@ describe("annotateText with customTerms (M3.5)", () => {
     );
   });
 
-  it("muscle test: full sentence with custom terms in hanzi stream", () => {
+  it("muscle test: full sentence with custom terms in hanzi stream", async () => {
     const terms = ["青云宗", "功法", "筑基丹"];
     const text = "青云宗主修炼功法依靠筑基丹突破境界。";
-    const frag = annotateText(text, terms);
+    const frag = await annotateText(text, terms);
     const rubies = Array.from(frag.querySelectorAll("ruby[data-word]"));
     // 青云宗, 主, 修炼, 功法, 依靠, 筑基丹, 突破, 境界, 。
     const words = rubies.map((r) => r.getAttribute("data-word"));
