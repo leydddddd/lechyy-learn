@@ -236,12 +236,12 @@ function _appendWords(frag: DocumentFragment, words: CharInfo[][]): void {
     }
 
     const ruby = document.createElement("ruby");
-    ruby.setAttribute("data-word", word.map((c) => c.origin).join(""));
-    ruby.setAttribute("data-hanzi-source", word.map((c) => c.origin).join(""));
+    ruby.setAttribute("data-word", hanziChars.map((c) => c.origin).join(""));
+    ruby.setAttribute("data-hanzi-source", hanziChars.map((c) => c.origin).join(""));
 
     for (const c of word) {
       if (!containsHanzi(c.origin)) {
-        ruby.appendChild(document.createTextNode(c.origin));
+        frag.appendChild(document.createTextNode(c.origin));
         continue;
       }
       const rb = document.createElement("rb");

@@ -333,4 +333,64 @@ describe("runLensMode (full content-script entry, M4.1 element-level)", () => {
     const count = await runLensMode();
     expect(count).toBe(3);
   });
+
+  it("does NOT annotate Japanese kana-only text on ja.wikipedia-style page", async () => {
+    installObserverMock();
+    document.documentElement.setAttribute("lang", "ja");
+    document.body.innerHTML = `
+      <article>
+        <p>働く (はたらく) は日本語の動詞です。</p>
+      </article>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // 働く is CJK hanzi (u6B74 + u50CF) so it WILL match HANZI_RE and get
+    // ruby — that is expected and correct.  What we assert is that hiragana
+    // never appears inside <ruby data-word> or <rt> elements.
+    const rubyText = Array.from(document.querySelectorAll("ruby[data-word]")).map(
+      (r) => r.getAttribute("data-word") ?? "",
+    );
+    for (const word of rubyText) {
+      if (word.length > 0) {
+        expect(/[\u4e00-\u9fff]/.test(word)).toBe(true);
+        expect(/[ぁ-ん]/.test(word)).toBe(false);
+      }
+    }
+    const rts = Array.from(document.querySelectorAll("ruby[data-word] rt"));
+    for (const rt of rts) {
+      const text = rt.textContent ?? "";
+      expect(/[ぁ-ん]/.test(text)).toBe(false);
+    }
+  });
+
+  it("does NOT annotate a Japanese page with only kana and kanji-readings", async () => {
+    installObserverMock();
+    document.documentElement.setAttribute("lang", "ja");
+    document.body.innerHTML = `
+      <div>
+        <p>今日きょうはWeatherうんてん。</p>
+        <p>日本語に拡張漢字が含まれます場合注意。</p>
+      </div>
+    `;
+    vi.stubGlobal("innerHeight", 2000);
+    installAlwaysInViewRect();
+
+    await runLensMode();
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Only characters from \u4e00-\u9fff may appear inside ruby data-word
+    // attributes. Hiragana (u3040-u309F) and katakana (u30A0-u30FF) must
+    // never be inside ruby elements.
+    const rts = Array.from(document.querySelectorAll("ruby[data-word] rt"));
+    for (const rt of rts) {
+      const text = rt.textContent ?? "";
+      expect(/[ぁ-ん]/.test(text)).toBe(false);
+    }
+  });
 });

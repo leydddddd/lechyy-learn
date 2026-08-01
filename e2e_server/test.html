@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lechyy E2E Test Page</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    section { margin: 20px 0; line-height: 1.8; font-size: 18px; }
+    h2 { margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <h1>Chinese Text Annotation — E2E Test</h1>
+
+  <section>
+    <h2>Simplified Chinese</h2>
+    <p>今天天气很好，我们一起去公园散步吧。</p>
+    <p>汉字是世界上最古老的文字之一。</p>
+    <p>学习中文需要耐心和坚持。</p>
+  </section>
+
+  <section>
+    <h2>Mixed with English</h2>
+    <p>这本书的作者是鲁迅，他写了《呐喊》。</p>
+    <p>北京是中国的首都，人口超过2000万。</p>
+  </section>
+
+  <section>
+    <h2>Japanese (should NOT be annotated)</h2>
+    <p lang="ja">今日は天気が良いので、公園に行く。</p>
+    <p lang="ja">日本語のテストを行います。</p>
+  </section>
+
+  <section>
+    <h2>Longer passage</h2>
+    <p>中华民族有着五千年的文明史，是世界上唯一一个延续至今的古代文明。从夏商周到秦汉，从唐宋到明清，历史的长河源远流长。四大发明对世界文明的发展产生了深远影响，丝绸之路连接了东西方的文化和经济交流。</p>
+  </section>
+
+  <section>
+    <h2>Numbers and punctuation</h2>
+    <p>今天温度是25°C，明天会降到18°C。</p>
+    <p>价格：¥100.50元。</p>
+  </section>
+</body>
+</html>
