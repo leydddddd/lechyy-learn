@@ -27,6 +27,7 @@ export type { DictEntry } from "../scripts/build-dict";
 const CEDICT_RESOURCE = "cedict.json";
 const USER_DICT_RESOURCE = "user-dict.json";
 const STORAGE_KEY = "userDict";
+const DOMAINS_STORAGE_KEY = "lechyy";
 
 // M4.5: Lazy LRU shard cache for CEDICT.
 const DEFAULT_LRU_SIZE = 64;
@@ -156,6 +157,33 @@ type DictLike = Map<string, DictEntry[]> | ShardedDictionary;
 
 let dictSource: DictLike | null = null;
 let loadPromise: Promise<DictLike> | null = null;
+
+// Per-domain allowlist (v2.0): reads { lechyy: { domains: ["example.com"] } }
+// from chrome.storage.local.  If the key is absent, all domains are allowed
+// (preserves existing behaviour).  If present, only listed domains are allowed.
+// Exported for tests.
+export async function isDomainAllowed(): Promise<boolean> {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    return true;
+  }
+  try {
+    const result = await chrome.storage.local.get(DOMAINS_STORAGE_KEY);
+    const lechyy = result[DOMAINS_STORAGE_KEY];
+    // Key absent = allow on all domains (default: on everywhere)
+    if (!lechyy || typeof lechyy !== "object" || !("domains" in lechyy)) {
+      return true;
+    }
+    const domains = lechyy.domains;
+    // Invalid domains list = allow on all domains (fail open)
+    if (!Array.isArray(domains)) return true;
+    // Use host without port, with optional trailing slash stripped
+    const host = (globalThis.location?.host ?? "").replace(/:\d+$/, "").replace(/\/.*$/, "");
+    return domains.includes(host);
+  } catch {
+    // On error, allow on all domains (fail open)
+    return true;
+  }
+}
 
 // Build a Map from the raw entries object. Pure — exported for tests so they
 // can construct a dictionary without hitting the network.

@@ -1,9 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   buildMap,
   getCustomTerms,
   getUserDictEntries,
+  isDomainAllowed,
   lookup,
   mergeOverlay,
   resetDictionary,
@@ -607,5 +615,90 @@ describe("loadDictionary with sharding (M4.5)", () => {
     // Should be the injected plain Map
     expect(dict).toBeInstanceOf(Map);
     expect(lookup(dict, "注入")![0].d).toEqual(["injected"]);
+  });
+});
+
+describe("isDomainAllowed (v2.0 per-domain allowlist)", () => {
+  const storageState: Record<string, unknown> = {};
+
+  function mockStorage(entries?: Record<string, unknown>): void {
+    if (entries) Object.assign(storageState, entries);
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          get: vi.fn().mockImplementation(
+            async (keys: string | string[] | Record<string, unknown>) => {
+              if (typeof keys === "string") {
+                return { [keys]: storageState[keys] };
+              }
+              if (Array.isArray(keys)) {
+                const out: Record<string, unknown> = {};
+                for (const k of keys) out[k] = storageState[k];
+                return out;
+              }
+              return { ...storageState };
+            },
+          ),
+          set: vi.fn(),
+        },
+      },
+    } as unknown as typeof chrome);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns true when lechyy key is absent (allow all)", async () => {
+    mockStorage({});
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("returns true when domains array is absent but lechyy key exists", async () => {
+    mockStorage({ lechyy: { other: "value" } });
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("returns true when domains array is invalid (not an array)", async () => {
+    mockStorage({ lechyy: { domains: "wuxiaworld.site" } });
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("returns true when chrome is absent (fail open)", async () => {
+    vi.unstubAllGlobals();
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("allows page when host matches the allowlist", async () => {
+    mockStorage({ lechyy: { domains: ["wuxiaworld.site", "webnovel.qq.com"] } });
+    vi.stubGlobal("location", { host: "wuxiaworld.site" });
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("blocks page when host is not in the allowlist", async () => {
+    mockStorage({ lechyy: { domains: ["wuxiaworld.site"] } });
+    vi.stubGlobal("location", { host: "qidian.com" });
+    expect(await isDomainAllowed()).toBe(false);
+  });
+
+  it("strips port from host when matching against allowlist", async () => {
+    mockStorage({ lechyy: { domains: ["example.com"] } });
+    vi.stubGlobal("location", { host: "example.com:8080" });
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("matches without trailing path", async () => {
+    mockStorage({ lechyy: { domains: ["example.com"] } });
+    vi.stubGlobal("location", {
+      host: "example.com",
+      pathname: "/chapter/123",
+    });
+    expect(await isDomainAllowed()).toBe(true);
+  });
+
+  it("empty domains array blocks everything", async () => {
+    mockStorage({ lechyy: { domains: [] } });
+    vi.stubGlobal("location", { host: "example.com" });
+    expect(await isDomainAllowed()).toBe(false);
   });
 });

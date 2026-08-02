@@ -1,7 +1,7 @@
 import { annotateTextSync, ensureAnnotator, markAnnotated } from "./annotator";
 import { collectLeafBlocks, collectTextNodes, containsHanzi } from "./segmenter";
 import { destroyTooltip, dismissHover, hideTooltip, onRubyHover } from "./tooltip";
-import { getCustomTerms } from "./dictionary";
+import { getCustomTerms, isDomainAllowed } from "./dictionary";
 import { attachMutationObserver } from "./mutation-observer";
 
 // Reinjection guard (0.4): mark that this script has loaded. On reinject, clean
@@ -166,6 +166,12 @@ async function annotateBlockWithMarking(
 // Fetches custom terms from chrome.storage.once on first call (M3.5).
 export async function runLensMode(): Promise<number> {
   if (!document.body) return 0;
+
+  // v2.0 per-domain allowlist: if lechyy.domains is set in storage and this
+  // host isn't listed, exit before the CJK gate so no data-word rubies and no
+  // dictionary fetches fire on unlisted domains.
+  if (!(await isDomainAllowed())) return 0;
+
   if (!pageHasChinese()) return 0;
   await ensureAnnotator();
 
