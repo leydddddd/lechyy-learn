@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   destroyTooltip,
   hideTooltip,
-  showTooltip,
+  showTooltip
 } from "./tooltip";
 import type { DictEntry } from "./dictionary";
 
@@ -534,5 +534,64 @@ describe("tooltip generation counter (M4.7)", () => {
     expect(getHoverGen()).toBe(2);
     beginHover();
     expect(getHoverGen()).toBe(3);
+  });
+});
+
+
+describe("sticky tooltip (Shift-hold)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.stubGlobal("innerWidth", 1024);
+    vi.stubGlobal("innerHeight", 800);
+    Element.prototype.getBoundingClientRect = vi.fn(
+      function (this: HTMLElement): DOMRect {
+        if (this.hasAttribute && this.hasAttribute("data-hanzi")) {
+          return rect(0, 80, 0, 200);
+        }
+        return rect(100, 130, 200, 60);
+      },
+    ) as unknown as typeof Element.prototype.getBoundingClientRect;
+  });
+
+  afterEach(() => {
+    destroyTooltip();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keepAlive: true sets pointer-events: auto on the tooltip", () => {
+    showTooltip({
+      word: "测试",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "测试", p: "cè shì", d: ["test"] }],
+      fallbackPinyin: "cè shì",
+      keepAlive: true,
+    });
+    const el = document.querySelector("div[data-hanzi='tooltip']")! as HTMLElement;
+    expect(el.style.pointerEvents).toBe("auto");
+    expect(el.classList.contains("hanzi-tooltip--visible")).toBe(true);
+  });
+
+  it("keepAlive: false removes pointer-events inline style", () => {
+    showTooltip({
+      word: "测试",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "测试", p: "cè shì", d: ["test"] }],
+      fallbackPinyin: "cè shì",
+      keepAlive: false,
+    });
+    const el = document.querySelector("div[data-hanzi='tooltip']")! as HTMLElement;
+    expect(el.style.pointerEvents).toBe("");
+  });
+
+  it("keepAlive default (undefined) removes pointer-events inline style", () => {
+    showTooltip({
+      word: "测试",
+      rubyRect: rect(100, 130),
+      entries: [{ t: "测试", p: "cè shì", d: ["test"] }],
+      fallbackPinyin: "cè shì",
+    });
+    const el = document.querySelector("div[data-hanzi='tooltip']")! as HTMLElement;
+    expect(el.style.pointerEvents).toBe("");
   });
 });

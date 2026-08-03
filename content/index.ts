@@ -1,6 +1,6 @@
 import { annotateTextSync, ensureAnnotator, markAnnotated } from "./annotator";
 import { collectLeafBlocks, collectTextNodes, containsHanzi } from "./segmenter";
-import { destroyTooltip, dismissHover, hideTooltip, onRubyHover } from "./tooltip";
+import { destroyTooltip, dismissHover, hideTooltip, onRubyHover, setInteractive } from "./tooltip";
 import { getCustomTerms, isDomainAllowed } from "./dictionary";
 import { attachMutationObserver } from "./mutation-observer";
 
@@ -41,8 +41,34 @@ function handleMouseOut(e: Event): void {
   // into a descendant like <rb>/<rt>).
   const related = (e as MouseEvent).relatedTarget as Node | null;
   if (related && ruby.contains(related)) return;
+  // Shift-hold sticky: if Shift is held, enable interactive mode so the
+  // tooltip stays open for selection/copying.
+  const me = e as MouseEvent;
+  if (me.shiftKey) {
+    setInteractive(true);
+    return;
+  }
   dismissHover();  // M4.7: invalidate in-flight lookups for this ruby
   hideTooltip();
+}
+
+// Sticky tooltip: when mode is active, the tooltip stays visible and text is
+// selectable. It dismisses on Esc, clicking elsewhere, or when the pointer
+// leaves the tooltip element itself (mouse target no longer related to ruby).
+function handleStickyMouseOver(e: Event): void {
+  // If pointer enters the tooltip element while Shift is held, keep it alive.
+  const tooltip = document.querySelector('[data-hanzi="tooltip"]') as HTMLElement | null;
+  if (tooltip && (e.target === tooltip || tooltip.contains(e.target as Node))) {
+    setInteractive(true);
+  }
+}
+
+function handleKeyDown(e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    hideTooltip();
+    setInteractive(false);
+    e.preventDefault();
+  }
 }
 
 // Attach the delegated hover listeners once per page. Idempotent.
@@ -51,6 +77,8 @@ export function attachHoverListeners(): void {
   if (!document.body) return;
   document.body.addEventListener("mouseover", handleMouseOver);
   document.body.addEventListener("mouseout", handleMouseOut);
+  document.body.addEventListener("mouseover", handleStickyMouseOver);
+  document.addEventListener("keydown", handleKeyDown);
   hoverListenersAttached = true;
 }
 

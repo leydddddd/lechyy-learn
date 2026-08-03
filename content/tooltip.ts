@@ -1,4 +1,4 @@
-// Hover tooltip for annotated ruby elements. A single shared <div> is mounted
+﻿// Hover tooltip for annotated ruby elements. A single shared <div> is mounted
 // once to document.body and repositioned on each hover. No framework — plain
 // DOM.
 //
@@ -25,6 +25,22 @@ let hoverGen = 0;
 export function getHoverGen(): number { return hoverGen; }
 export function beginHover(): number { return ++hoverGen; }
 export function dismissHover(): void { hoverGen++; }
+
+// Track whether the tooltip is in interactive (sticky) mode.
+// When true, the tooltip stays open after pointer leaves the ruby and
+// pointer-events are enabled so text is selectable/copyable.
+let interactive = false;
+
+export function setInteractive(val: boolean): void {
+  interactive = val;
+}
+
+/** Return true if the tooltip has been activated in interactive (sticky) mode.
+ *  Used by handleMouseOut in index.ts to decide whether mouseleave on the
+ *  ruby should keep the tooltip alive for Shift-hold copy. */
+export function tooltipElWasInteractive(): boolean {
+  return interactive;
+}
 
 const TOOLTIP_ID = "hanzi-tooltip";
 const VISIBLE_CLASS = "hanzi-tooltip--visible";
@@ -133,11 +149,12 @@ export interface TooltipShowOptions {
   rubyRect: DOMRect;
   entries: DictEntry[] | null;
   fallbackPinyin: string;
+  keepAlive?: boolean;
 }
 
 export function showTooltip(opts: TooltipShowOptions): void {
   const el = ensureTooltip();
-  const { word, rubyRect, entries, fallbackPinyin } = opts;
+  const { word, rubyRect, entries, fallbackPinyin, keepAlive } = opts;
 
   if (entries && entries.length > 0) {
     // CEDICT hit: show the first entry's definitions. Multiple entries with
@@ -152,6 +169,12 @@ export function showTooltip(opts: TooltipShowOptions): void {
   el.style.display = "block";
   el.classList.add(VISIBLE_CLASS);
   positionTooltip(el, rubyRect);
+
+  if (keepAlive) {
+    el.style.pointerEvents = "auto";
+  } else {
+    el.style.removeProperty("pointer-events");
+  }
 }
 
 export function hideTooltip(): void {
@@ -215,3 +238,4 @@ export function destroyTooltip(): void {
   // tooltipEl was nullified by a previous reinjection.
   document.querySelectorAll(TOOLTIP_SELECTOR).forEach((n) => n.remove());
 }
+
