@@ -302,4 +302,18 @@ if (
       err instanceof Error ? err.message : String(err),
     ),
   );
+
+  // M5.2: Listen for panel toggle messages from the popup.
+  chrome.runtime?.onMessage?.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === "lechyy-panel-show" || msg.type === "lechyy-panel-hide") {
+      import("../panel/index").then((panel) => {
+        const active =
+          msg.type === "lechyy-panel-show"
+            ? panel.showPanel()
+            : panel.hidePanel();
+        sendResponse({ panelActive: active });
+      });
+      return true; // keep channel open for async response
+    }
+  });
 }
